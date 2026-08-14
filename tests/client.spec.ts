@@ -1,0 +1,370 @@
+import { describe, expect, it, vi } from 'vitest'
+import { GitlabClient, GitlabError } from '../src/client.ts'
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+}
+
+function textResponse(status: number, body: string): Response {
+  return new Response(body, { status, headers: { 'content-type': 'text/plain' } })
+}
+
+describe('GitlabClient', () => {
+  it('fetches project metadata with private-token header and default base URL', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      id: 123,
+      name: 'payments',
+      path_with_namespace: 'acme/payments',
+      description: 'payment service',
+      star_count: 42,
+      default_branch: 'main',
+      visibility: 'private',
+      web_url: 'https://gitlab.com/acme/payments',
+      last_activity_at: '2026-08-13T00:00:00Z',
+    }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const project = await client.getProject('acme/payments')
+
+    expect(project).toEqual({
+      id: 123,
+      name: 'payments',
+      pathWithNamespace: 'acme/payments',
+      description: 'payment service',
+      stars: 42,
+      defaultBranch: 'main',
+      visibility: 'private',
+      webUrl: 'https://gitlab.com/acme/payments',
+      lastActivityAt: '2026-08-13T00:00:00Z',
+    })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://gitlab.com/api/v4/projects/acme%2Fpayments')
+    expect(init.headers).toMatchObject({ 'private-token': 'glpat_test' })
+  })
+
+  it('throws GitlabError with status 404 when the project does not exist', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    await expect(client.getProject('nope/missing')).rejects.toThrow(GitlabError)
+  })
+
+  it('throws GitlabError 401 on invalid token and 429 on rate limiting', async () => {
+    const client401 = new GitlabClient({ fetchImpl: vi.fn(async () => jsonResponse(401, {})) })
+    await expect(client401.getProject('a/b')).rejects.toMatchObject({ status: 401 })
+    const client429 = new GitlabClient({ fetchImpl: vi.fn(async () => jsonResponse(429, {})) })
+    await expect(client429.getProject('a/b')).rejects.toMatchObject({ status: 429 })
+  })
+
+  it('honors a self-managed baseUrl override', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      id: 1, name: 'x', path_with_namespace: 'a/x', description: null, star_count: 0,
+      default_branch: 'main', visibility: 'private', web_url: 'https://gitlab.example.com/a/x',
+      last_activity_at: '2026-01-01T00:00:00Z',
+    }))
+    const client = new GitlabClient({ baseUrl: 'https://gitlab.example.com/api/v4/', fetchImpl })
+    await client.getProject('a/x')
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url.startsWith('https://gitlab.example.com/api/v4/projects/')).toBe(true)
+  })
+
+  it('searchProjects builds query params and maps items', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 1, name: 'payments', path_with_namespace: 'acme/payments', description: 'd', star_count: 5, visibility: 'internal', web_url: 'https://gitlab.com/acme/payments', last_activity_at: '2026-01-01T00:00:00Z' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const items = await client.searchProjects('payments', { orderBy: 'stars', order: 'desc', perPage: 5 })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/projects?')
+    expect(url).toContain('search=payments')
+    expect(url).toContain('order_by=stars')
+    expect(url).toContain('sort=desc')
+    expect(url).toContain('per_page=5')
+    expect(items[0]).toMatchObject({ pathWithNamespace: 'acme/payments', stars: 5 })
+  })
+
+  it('listGroupProjects passes include_subgroups', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, []))
+    const client = new GitlabClient({ fetchImpl })
+    await client.listGroupProjects('acme', { includeSubgroups: true, perPage: 10 })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/groups/acme/projects?')
+    expect(url).toContain('include_subgroups=true')
+    expect(url).toContain('per_page=10')
+  })
+
+  it('listGroupMembers maps access levels to labels', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 1, username: 'alice', name: 'Alice', access_level: 50, web_url: 'https://gitlab.com/alice' },
+      { id: 2, username: 'bob', name: 'Bob', access_level: 30, web_url: 'https://gitlab.com/bob' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const members = await client.listGroupMembers('acme')
+    expect(members[0]).toMatchObject({ username: 'alice', accessLabel: 'Owner' })
+    expect(members[1]).toMatchObject({ username: 'bob', accessLabel: 'Developer' })
+  })
+
+  it('listIssues passes state and assignee filters', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { iid: 1, title: 'Bug', state: 'opened', labels: ['bug'], created_at: '2026-01-01T00:00:00Z', author: { username: 'alice' }, web_url: 'https://gitlab.com/a/b/-/issues/1' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const issues = await client.listIssues('a/b', { state: 'opened', assigneeUsername: 'alice', perPage: 3 })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/issues?')
+    expect(url).toContain('state=opened')
+    expect(url).toContain('assignee_username=alice')
+    expect(url).toContain('per_page=3')
+    expect(issues[0]).toMatchObject({ iid: 1, labels: ['bug'], author: 'alice' })
+  })
+
+  it('getIssue maps the description', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      iid: 1, title: 'Bug', state: 'opened', labels: [], created_at: '2026-01-01T00:00:00Z',
+      author: { username: 'alice' }, description: 'details here', web_url: 'https://gitlab.com/a/b/-/issues/1',
+    }))
+    const client = new GitlabClient({ fetchImpl })
+    const issue = await client.getIssue('a/b', 1)
+    expect(issue).toMatchObject({ iid: 1, description: 'details here' })
+  })
+
+  it('createIssue POSTs title, description, and labels', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { iid: 9, web_url: 'https://gitlab.com/a/b/-/issues/9' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createIssue('a/b', { title: 'Bug', description: 'Why', labels: ['bug'] })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ title: 'Bug', description: 'Why', labels: ['bug'] })
+    expect(result).toEqual({ ok: true, iid: 9, webUrl: 'https://gitlab.com/a/b/-/issues/9' })
+  })
+
+  it('commentOnIssue returns the issue URL', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 77 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.commentOnIssue('a/b', 9, 'looks good')
+    expect(result).toEqual({ ok: true, webUrl: 'https://gitlab.com/a/b/-/issues/9' })
+  })
+
+  it('commentMr returns the MR URL', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 78 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.commentMr('a/b', 7, 'please rebase')
+    expect(result).toEqual({ ok: true, webUrl: 'https://gitlab.com/a/b/-/merge_requests/7' })
+  })
+
+  it('updateIssue sends state_event close', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { iid: 1, state: 'closed', web_url: 'https://gitlab.com/a/b/-/issues/1' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    await client.updateIssue('a/b', 1, 'close')
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ state_event: 'close' })
+  })
+
+  it('listMrs maps draft, conflicts, and branches', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { iid: 7, title: 'Add checkout', state: 'opened', draft: true, author: { username: 'alice' }, source_branch: 'feat/x', target_branch: 'main', created_at: '2026-01-01T00:00:00Z', has_conflicts: false, web_url: 'https://gitlab.com/a/b/-/merge_requests/7' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const mrs = await client.listMrs('a/b', { state: 'opened' })
+    expect(mrs[0]).toMatchObject({ iid: 7, draft: true, sourceBranch: 'feat/x', targetBranch: 'main', hasConflicts: false })
+  })
+
+  it('getMr maps the pipeline and detailed merge status', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      iid: 7, title: 'Add checkout', state: 'opened', draft: false, author: { username: 'alice' },
+      source_branch: 'feat/x', target_branch: 'main', created_at: '2026-01-01T00:00:00Z', has_conflicts: false,
+      description: 'desc', merge_status: 'can_be_merged', detailed_merge_status: 'mergeable', squash: true,
+      pipeline: { id: 11, status: 'success', ref: 'feat/x', web_url: 'https://gitlab.com/a/b/-/pipelines/11' },
+      web_url: 'https://gitlab.com/a/b/-/merge_requests/7',
+    }))
+    const client = new GitlabClient({ fetchImpl })
+    const mr = await client.getMr('a/b', 7)
+    expect(mr).toMatchObject({ iid: 7, detailedMergeStatus: 'mergeable', squash: true })
+    expect(mr.pipeline).toMatchObject({ id: 11, status: 'success' })
+  })
+
+  it('getMrChanges maps file changes', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      iid: 7, title: 'x', changes: [
+        { old_path: 'a.ts', new_path: 'a.ts', new_file: false, deleted_file: false, renamed_file: false, diff: '@@ -1 +1 @@\n-old\n+new' },
+      ],
+    }))
+    const client = new GitlabClient({ fetchImpl })
+    const changes = await client.getMrChanges('a/b', 7)
+    expect(changes.changes[0]).toMatchObject({ oldPath: 'a.ts', newFile: false, diff: '@@ -1 +1 @@\n-old\n+new' })
+  })
+
+  it('listMrDiscussions maps notes and authors', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 'd1', notes: [{ id: 1, author: { username: 'alice' }, created_at: '2026-01-01T00:00:00Z', body: 'please fix', resolvable: true, resolved: false }] },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const discussions = await client.listMrDiscussions('a/b', 7)
+    expect(discussions[0].notes[0]).toMatchObject({ author: 'alice', body: 'please fix', resolved: false })
+  })
+
+  it('listCommits maps short SHA and author', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 'abcdef1234567890', title: 'Fix bug', message: 'Fix bug\n\nbody', author_name: 'Alice', committed_date: '2026-01-01T00:00:00Z', web_url: 'https://gitlab.com/a/b/-/commit/abcdef' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const commits = await client.listCommits('a/b', { ref: 'main', perPage: 5 })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('ref_name=main')
+    expect(commits[0]).toMatchObject({ sha: 'abcdef1', author: 'Alice' })
+  })
+
+  it('getFile decodes base64 content and returns found:false on 404', async () => {
+    const content = Buffer.from('hello world', 'utf8').toString('base64')
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      file_name: 'readme.md', file_path: 'readme.md', size: 11, encoding: 'base64', content, web_url: 'https://gitlab.com/a/b/-/blob/main/readme.md',
+    }))
+    const client = new GitlabClient({ fetchImpl })
+    const file = await client.getFile('a/b', 'readme.md')
+    expect(file).toMatchObject({ found: true, content: 'hello world', size: 11 })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/files/readme.md?')
+    expect(url).toContain('ref=HEAD')
+
+    const missing = new GitlabClient({ fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.getFile('a/b', 'nope.txt')).toEqual({ found: false })
+  })
+
+  it('listPipelines passes ref/status filters', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 11, ref: 'main', sha: 'abcdef1234567890', status: 'failed', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', web_url: 'https://gitlab.com/a/b/-/pipelines/11' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const pipelines = await client.listPipelines('a/b', { ref: 'main', status: 'failed' })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('ref=main')
+    expect(url).toContain('status=failed')
+    expect(pipelines[0]).toMatchObject({ id: 11, sha: 'abcdef1' })
+  })
+
+  it('getPipeline maps stages', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      id: 11, ref: 'main', sha: 'abcdef1234567890', status: 'success', stages: ['build', 'test', 'deploy'],
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', web_url: 'https://gitlab.com/a/b/-/pipelines/11',
+    }))
+    const client = new GitlabClient({ fetchImpl })
+    const pipeline = await client.getPipeline('a/b', 11)
+    expect(pipeline).toMatchObject({ status: 'success', stages: ['build', 'test', 'deploy'] })
+  })
+
+  it('getJobLog reads the raw trace and maps 404 to found:false', async () => {
+    const fetchImpl = vi.fn(async () => textResponse(200, 'section_start\nrunning tests...\nsection_end'))
+    const client = new GitlabClient({ fetchImpl })
+    const log = await client.getJobLog('a/b', 654321)
+    expect(log).toMatchObject({ found: true, content: 'section_start\nrunning tests...\nsection_end' })
+    expect(log.webUrl).toContain('/-/jobs/654321')
+
+    const missing = new GitlabClient({ fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.getJobLog('a/b', 1)).toEqual({ found: false })
+  })
+
+  it('searchCode maps blob matches', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { basename: 'index.ts', path: 'src/index.ts', data: 'export const x = 1', filename: 'src/index.ts', ref: 'main', startline: 3, project_id: 1 },
+    ]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.searchCode('a/b', 'defineTool', { perPage: 5 })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/search?')
+    expect(url).toContain('scope=blobs')
+    expect(url).toContain('search=defineTool')
+    expect(result.authenticated).toBe(true)
+    expect(result.items[0]).toMatchObject({ path: 'src/index.ts', startLine: 3 })
+  })
+
+  it('getCurrentUser and listTodos map identity and todos', async () => {
+    const fetchUser = vi.fn(async () => jsonResponse(200, { id: 1, username: 'alice', name: 'Alice', web_url: 'https://gitlab.com/alice' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl: fetchUser })
+    const user = await client.getCurrentUser()
+    expect(user).toMatchObject({ username: 'alice' })
+
+    const fetchTodos = vi.fn(async () => jsonResponse(200, [
+      { id: 5, project: { path_with_namespace: 'a/b' }, target_type: 'MergeRequest', target: { iid: 7, title: 'Add checkout', web_url: 'https://gitlab.com/a/b/-/merge_requests/7' }, action_name: 'approval_required', body: 'MR awaiting approval', created_at: '2026-01-01T00:00:00Z' },
+    ]))
+    const todoClient = new GitlabClient({ token: 'glpat_test', fetchImpl: fetchTodos })
+    const todos = await todoClient.listTodos({ perPage: 20 })
+    const [url] = fetchTodos.mock.calls[0] as [string]
+    expect(url).toContain('/todos?')
+    expect(url).toContain('state=pending')
+    expect(todos[0]).toMatchObject({ project: 'a/b', targetType: 'MergeRequest', action: 'approval_required' })
+  })
+
+  it('createMr POSTs draft and maps 409 to created:false', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { iid: 12, web_url: 'https://gitlab.com/a/b/-/merge_requests/12' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createMr('a/b', { title: 'Change', sourceBranch: 'feat/x', targetBranch: 'main', description: 'Why', draft: true })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ source_branch: 'feat/x', target_branch: 'main', title: 'Change', description: 'Why', draft: true })
+    expect(result).toEqual({ created: true, iid: 12, webUrl: 'https://gitlab.com/a/b/-/merge_requests/12' })
+
+    const conflict = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(409, {})) })
+    const failed = await conflict.createMr('a/b', { title: 'x', sourceBranch: 'a', targetBranch: 'b' })
+    expect(failed.created).toBe(false)
+    expect(failed.reason).toBeTruthy()
+  })
+
+  it('approveMr maps 409 already-approved to ok:false', async () => {
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(409, {})) })
+    const result = await client.approveMr('a/b', 7)
+    expect(result).toEqual({ ok: false, reason: expect.any(String) })
+  })
+
+  it('mergeMr PUTs squash and maps 406 to merged:false', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { web_url: 'https://gitlab.com/a/b/-/merge_requests/7' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.mergeMr('a/b', 7, { squash: true })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toEqual({ squash: true })
+    expect(result.merged).toBe(true)
+
+    const blocked = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(406, {})) })
+    const failed = await blocked.mergeMr('a/b', 7)
+    expect(failed.merged).toBe(false)
+    expect(failed.reason).toBeTruthy()
+  })
+
+  it('triggerPipeline POSTs the ref and maps 400 to created:false', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 99, status: 'created', web_url: 'https://gitlab.com/a/b/-/pipelines/99' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.triggerPipeline('a/b', 'main')
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('POST')
+    expect(url).toContain('/pipeline?ref=main')
+    expect(result).toEqual({ created: true, pipelineId: 99, status: 'created', webUrl: 'https://gitlab.com/a/b/-/pipelines/99' })
+
+    const noConfig = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(400, {})) })
+    expect((await noConfig.triggerPipeline('a/b', 'main')).created).toBe(false)
+  })
+
+  it('createBranch POSTs branch/ref and maps 400 to ok:false', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { name: 'feat/x' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createBranch('a/b', 'feat/x', 'main')
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ branch: 'feat/x', ref: 'main' })
+    expect(result).toEqual({ ok: true, name: 'feat/x' })
+
+    const exists = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(400, {})) })
+    expect((await exists.createBranch('a/b', 'feat/x', 'main')).ok).toBe(false)
+  })
+
+  it('writeFile commits via the commits API and maps 400 to ok:false', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 'abcdef1234567890', short_id: 'abcdef1', title: 'Update docs/notes.md' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.writeFile('a/b', 'docs/notes.md', 'hi', { message: 'Update notes', branch: 'main' })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('POST')
+    expect(url).toContain('/repository/commits')
+    const body = JSON.parse(String(init.body))
+    expect(body).toMatchObject({ branch: 'main', commit_message: 'Update notes' })
+    expect(body.actions[0]).toMatchObject({ action: 'update', file_path: 'docs/notes.md', content: 'hi' })
+    expect(result).toEqual({ ok: true, path: 'docs/notes.md', commitSha: 'abcdef1' })
+
+    const rejected = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(400, {})) })
+    expect((await rejected.writeFile('a/b', 'x', 'y', { message: 'm' })).ok).toBe(false)
+  })
+})

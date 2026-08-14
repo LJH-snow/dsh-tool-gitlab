@@ -1,0 +1,16 @@
+# dsh-tool-gitlab 组合示例
+# 用法:在 dsh 的组合配置中引入本插件(示例片段,按你的部署组合调整)
+#
+# 方式一:从 GitHub 直接加载(无需发布 npm)
+- name: 'github:LJH-snow/dsh-tool-gitlab'
+# 方式二:发布到 npm 后
+# - name: '@libai168/dsh-tool-gitlab'
+  config:
+    # GitLab Personal Access Token(可选;gitlab_create_mr / gitlab_approve_mr /
+    # gitlab_trigger_pipeline / gitlab_write_file / gitlab_list_todos 等需要)
+    token: 'glpat_xxx'
+    # GitLab API base URL(可选,默认 https://gitlab.com/api/v4)
+    # 企业自托管 GitLab 示例:
+    # baseUrl: 'https://gitlab.example.com/api/v4'
+    # 请求超时(毫秒,可选,默认 15000)
+    # timeoutMs: 15000
