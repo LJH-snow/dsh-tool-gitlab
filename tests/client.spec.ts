@@ -200,6 +200,87 @@ describe('GitlabClient', () => {
     expect(discussions[0].notes[0]).toMatchObject({ author: 'alice', body: 'please fix', resolved: false })
   })
 
+  it('getMrApprovals maps approved-by users and rules', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      approved: true,
+      approved_by: [{ user: { username: 'alice' } }, { user: { username: 'bob' } }],
+      approvals_required: 1,
+      approvals_left: 0,
+      rules: [
+        { name: 'Maintainer', rule_type: 'any_approver', approvals_required: 1, approvals_left: 0, approved: true, approved_by: [{ user: { username: 'alice' } }] },
+      ],
+    }))
+    const client = new GitlabClient({ fetchImpl })
+    const approvals = await client.getMrApprovals('a/b', 7)
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/merge_requests/7/approvals')
+    expect(approvals).toMatchObject({ approved: true, approvedBy: ['alice', 'bob'], approvalsLeft: 0 })
+    expect(approvals.rules[0]).toMatchObject({ name: 'Maintainer', ruleType: 'any_approver', approvedBy: ['alice'] })
+  })
+
+  it('replyToDiscussion POSTs the note to the thread', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 88 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.replyToDiscussion('a/b', 7, 'd1', 'fixed, thanks')
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('POST')
+    expect(url).toContain('/discussions/d1/notes')
+    expect(JSON.parse(String(init.body))).toEqual({ body: 'fixed, thanks' })
+    expect(result).toEqual({ ok: true, noteId: 88 })
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.replyToDiscussion('a/b', 7, 'd1', 'x')).ok).toBe(false)
+  })
+
+  it('resolveDiscussion PUTs resolved state', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { id: 'd1' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.resolveDiscussion('a/b', 7, 'd1', true)
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('PUT')
+    expect(url).toContain('/discussions/d1')
+    expect(JSON.parse(String(init.body))).toEqual({ resolved: true })
+    expect(result).toEqual({ ok: true })
+  })
+
+  it('listLabels maps label colors', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 1, name: 'bug', color: '#d9534f', description: 'Something is broken' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const labels = await client.listLabels('a/b')
+    expect(labels[0]).toMatchObject({ name: 'bug', color: '#d9534f' })
+  })
+
+  it('listMilestones maps due dates and state', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 1, iid: 2, title: 'v1.1', description: null, state: 'active', due_date: '2026-09-01', start_date: null, web_url: 'https://gitlab.com/a/b/-/milestones/2' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const milestones = await client.listMilestones('a/b', { state: 'active' })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('state=active')
+    expect(milestones[0]).toMatchObject({ iid: 2, title: 'v1.1', dueDate: '2026-09-01' })
+  })
+
+  it('listReleases maps tags, authors, and links', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { tag_name: 'v1.0.0', name: 'Version 1', description: 'notes', released_at: '2026-01-01T00:00:00Z', author: { name: 'Alice' }, _links: { self: 'https://gitlab.com/a/b/-/releases/v1.0.0' } },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const releases = await client.listReleases('a/b')
+    expect(releases[0]).toMatchObject({ tagName: 'v1.0.0', name: 'Version 1', author: 'Alice', webUrl: 'https://gitlab.com/a/b/-/releases/v1.0.0' })
+  })
+
+  it('listEnvironments maps states and external URLs', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      { id: 1, name: 'staging', slug: 'staging', state: 'available', external_url: 'https://staging.example.com' },
+    ]))
+    const client = new GitlabClient({ fetchImpl })
+    const environments = await client.listEnvironments('a/b')
+    expect(environments[0]).toMatchObject({ name: 'staging', state: 'available', externalUrl: 'https://staging.example.com' })
+  })
+
   it('listCommits maps short SHA and author', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(200, [
       { id: 'abcdef1234567890', title: 'Fix bug', message: 'Fix bug\n\nbody', author_name: 'Alice', committed_date: '2026-01-01T00:00:00Z', web_url: 'https://gitlab.com/a/b/-/commit/abcdef' },

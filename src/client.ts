@@ -127,6 +127,17 @@ export interface DiscussionItem {
   notes: NoteItem[]
 }
 
+export interface DiscussionReplyResult {
+  ok: boolean
+  noteId?: number
+  reason?: string
+}
+
+export interface DiscussionResolveResult {
+  ok: boolean
+  reason?: string
+}
+
 export interface CommitItem {
   sha: string
   title: string
@@ -149,6 +160,56 @@ export interface FileContent {
 export interface BranchItem {
   name: string
   sha: string
+}
+
+export interface LabelItem {
+  id: number
+  name: string
+  color: string
+  description: string | null
+}
+
+export interface MilestoneItem {
+  id: number
+  iid: number
+  title: string
+  description: string | null
+  state: string
+  dueDate: string | null
+  startDate: string | null
+  webUrl: string
+}
+
+export interface ReleaseItem {
+  tagName: string
+  name: string
+  description: string
+  releasedAt: string
+  author: string
+  webUrl: string
+}
+
+export interface EnvironmentItem {
+  id: number
+  name: string
+  slug: string
+  state: string
+  externalUrl: string | null
+}
+
+export interface MrApprovals {
+  approved: boolean
+  approvedBy: string[]
+  approvalsRequired: number
+  approvalsLeft: number
+  rules: Array<{
+    name: string
+    ruleType: string
+    approvalsRequired: number
+    approvalsLeft: number
+    approved: boolean
+    approvedBy: string[]
+  }>
 }
 
 export interface PipelineItem {
@@ -667,6 +728,137 @@ export class GitlabClient {
         resolvable: note.resolvable,
         resolved: note.resolved,
       })),
+    }))
+  }
+
+  async getMrApprovals(project: string, mrIid: number, signal?: AbortSignal): Promise<MrApprovals> {
+    const data = await this.request<{
+      approved: boolean
+      approved_by: Array<{ user: { username: string } }>
+      approvals_required: number
+      approvals_left: number
+      rules: Array<{
+        name: string
+        rule_type: string
+        approvals_required: number
+        approvals_left: number
+        approved: boolean
+        approved_by: Array<{ user: { username: string } }>
+      }>
+    }>(`/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/approvals`, { signal })
+    return {
+      approved: data.approved,
+      approvedBy: (data.approved_by ?? []).map(item => item.user.username),
+      approvalsRequired: data.approvals_required,
+      approvalsLeft: data.approvals_left,
+      rules: (data.rules ?? []).map(rule => ({
+        name: rule.name,
+        ruleType: rule.rule_type,
+        approvalsRequired: rule.approvals_required,
+        approvalsLeft: rule.approvals_left,
+        approved: rule.approved,
+        approvedBy: (rule.approved_by ?? []).map(item => item.user.username),
+      })),
+    }
+  }
+
+  async replyToDiscussion(project: string, mrIid: number, discussionId: string, body: string, signal?: AbortSignal): Promise<DiscussionReplyResult> {
+    try {
+      const data = await this.request<{ id: number }>(
+        `/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/discussions/${encodeURIComponent(discussionId)}/notes`,
+        { method: 'POST', body: { body }, signal },
+      )
+      return { ok: true, noteId: data.id }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Discussion thread not found.' }
+      }
+      throw error
+    }
+  }
+
+  async resolveDiscussion(project: string, mrIid: number, discussionId: string, resolved: boolean, signal?: AbortSignal): Promise<DiscussionResolveResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/discussions/${encodeURIComponent(discussionId)}`,
+        { method: 'PUT', body: { resolved }, signal },
+      )
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Discussion thread not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listLabels(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<LabelItem[]> {
+    const data = await this.request<Array<{
+      id: number
+      name: string
+      color: string
+      description: string | null
+    }>>(`/projects/${encodeURIComponent(project)}/labels?${this.pageParams(options.perPage)}`, { signal: options.signal })
+    return data.map(item => ({ id: item.id, name: item.name, color: item.color, description: item.description }))
+  }
+
+  async listMilestones(project: string, options: { state?: 'active' | 'closed' | 'all'; perPage?: number; signal?: AbortSignal } = {}): Promise<MilestoneItem[]> {
+    const params = new URLSearchParams({ state: options.state ?? 'active', ...(options.perPage ? { per_page: String(options.perPage) } : {}) })
+    const data = await this.request<Array<{
+      id: number
+      iid: number
+      title: string
+      description: string | null
+      state: string
+      due_date: string | null
+      start_date: string | null
+      web_url: string
+    }>>(`/projects/${encodeURIComponent(project)}/milestones?${params}`, { signal: options.signal })
+    return data.map(item => ({
+      id: item.id,
+      iid: item.iid,
+      title: item.title,
+      description: item.description,
+      state: item.state,
+      dueDate: item.due_date,
+      startDate: item.start_date,
+      webUrl: item.web_url,
+    }))
+  }
+
+  async listReleases(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<ReleaseItem[]> {
+    const data = await this.request<Array<{
+      tag_name: string
+      name: string
+      description: string
+      released_at: string
+      author: { name: string }
+      _links: { self: string } | null
+    }>>(`/projects/${encodeURIComponent(project)}/releases?${this.pageParams(options.perPage)}`, { signal: options.signal })
+    return data.map(item => ({
+      tagName: item.tag_name,
+      name: item.name ?? item.tag_name,
+      description: item.description ?? '',
+      releasedAt: item.released_at,
+      author: item.author?.name ?? '',
+      webUrl: item._links?.self ?? '',
+    }))
+  }
+
+  async listEnvironments(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<EnvironmentItem[]> {
+    const data = await this.request<Array<{
+      id: number
+      name: string
+      slug: string
+      state: string
+      external_url: string | null
+    }>>(`/projects/${encodeURIComponent(project)}/environments?${this.pageParams(options.perPage)}`, { signal: options.signal })
+    return data.map(item => ({
+      id: item.id,
+      name: item.name,
+      slug: item.slug,
+      state: item.state,
+      externalUrl: item.external_url,
     }))
   }
 

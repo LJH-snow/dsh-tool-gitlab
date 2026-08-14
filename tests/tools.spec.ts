@@ -27,21 +27,28 @@ describe('tool definitions', () => {
       'gitlab_get_issue',
       'gitlab_get_job_log',
       'gitlab_get_mr',
+      'gitlab_get_mr_approvals',
       'gitlab_get_mr_changes',
       'gitlab_get_pipeline',
       'gitlab_get_project',
       'gitlab_list_branches',
       'gitlab_list_commits',
+      'gitlab_list_environments',
       'gitlab_list_group_members',
       'gitlab_list_group_projects',
       'gitlab_list_issues',
+      'gitlab_list_labels',
+      'gitlab_list_milestones',
       'gitlab_list_mr_discussions',
       'gitlab_list_mrs',
       'gitlab_list_pipelines',
       'gitlab_list_project_members',
+      'gitlab_list_releases',
       'gitlab_list_subgroups',
       'gitlab_list_todos',
       'gitlab_merge_mr',
+      'gitlab_reply_mr_discussion',
+      'gitlab_resolve_mr_discussion',
       'gitlab_search_code',
       'gitlab_search_projects',
       'gitlab_trigger_pipeline',
@@ -141,6 +148,43 @@ describe('tool definitions', () => {
     expect(text).toContain('cannot_be_merged')
     expect(text).toContain('conflicts: yes')
     expect(text).toContain('pipeline #1: failed')
+  })
+
+  it('gitlab_get_mr_approvals renders approval state', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_get_mr_approvals')!
+    const blocks = await (tool.output as { render: (a: unknown, v: any) => unknown }).render({}, {
+      found: true, approved: false, approvedBy: [], approvalsRequired: 2, approvalsLeft: 1,
+      rules: [{ name: 'Maintainer', ruleType: 'any_approver', approvalsRequired: 2, approvalsLeft: 1, approved: false, approvedBy: [] }],
+    })
+    const text = JSON.stringify(blocks)
+    expect(text).toContain('1 left')
+    expect(text).toContain('Maintainer')
+  })
+
+  it('gitlab_reply_mr_discussion and gitlab_resolve_mr_discussion require a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const toolsMap = createTools(client).map(t => [t.name, t] as const)
+    const reply = toolsMap.find(([name]) => name === 'gitlab_reply_mr_discussion')![1]
+    expect(await reply.execute({ project: 'a/b', iid: 7, discussionId: 'd1', body: 'x' }, exec())).toMatchObject({ ok: false })
+    const resolve = toolsMap.find(([name]) => name === 'gitlab_resolve_mr_discussion')![1]
+    expect(await resolve.execute({ project: 'a/b', iid: 7, discussionId: 'd1' }, exec())).toMatchObject({ ok: false })
+  })
+
+  it('gitlab_list_releases renders release rows', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_list_releases')!
+    const blocks = await (tool.output as { render: (a: unknown, v: any) => unknown }).render({}, {
+      items: [{ tagName: 'v1.0.0', name: 'Version 1', description: '', releasedAt: '2026-01-01T00:00:00Z', author: 'Alice', webUrl: '' }],
+    })
+    expect(JSON.stringify(blocks)).toContain('v1.0.0')
+  })
+
+  it('gitlab_list_environments presents a search paths card', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_list_environments')!
+    const view = tool.presentResult!({ project: 'a/b' }, { items: [{ name: 'staging', state: 'available' }] })
+    expect(view).toMatchObject({ card: 'search', shape: 'paths' })
   })
 
   it('gitlab_get_job_log presents a terminal card', async () => {

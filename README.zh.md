@@ -49,10 +49,11 @@ npm install /path/to/dsh-tool-gitlab
 
 | 领域 | 本插件(GitLab) | GitHub 插件 |
 |---|---|---|
-| MR 全生命周期 | `gitlab_get_mr_changes`(逐文件 diff)、`gitlab_list_mr_discussions`(评审讨论线)、`gitlab_approve_mr`、`gitlab_merge_mr`(squash) | 仅 PR 草稿 + 合并 |
+| MR 全生命周期 | `gitlab_get_mr_changes`(逐文件 diff)、`gitlab_list_mr_discussions`(评审讨论线)、`gitlab_reply_mr_discussion`、`gitlab_resolve_mr_discussion`、`gitlab_get_mr_approvals`(审批规则)、`gitlab_approve_mr`、`gitlab_merge_mr`(squash) | 仅 PR 草稿 + 合并 |
 | CI/CD | `gitlab_list_pipelines`、`gitlab_get_pipeline`(stages)、`gitlab_get_job_log`(完整日志)、`gitlab_trigger_pipeline` | 仅 workflow 运行列表 |
 | 组织与治理 | `gitlab_list_group_projects`、`gitlab_list_subgroups`、`gitlab_list_group_members`、`gitlab_list_project_members`(Guest→Owner 访问级别) | — |
 | 个人工作台 | `gitlab_list_todos`(指派/待批准/被提及)、`gitlab_get_current_user` | — |
+| 发布与 DevOps | `gitlab_list_releases`、`gitlab_list_milestones`、`gitlab_list_environments`、`gitlab_list_labels` | 仅 releases 列表 |
 | 自托管 | `baseUrl` 覆盖指向内网 GitLab | GitHub Enterprise baseUrl |
 | 评审 UX | MR 变更为 `search` 卡片、写文件为 `diff` 卡片、Job 日志为 `terminal` 卡片 | generic/search 卡片 |
 
@@ -73,10 +74,15 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_list_mrs` | 列出 MR(状态过滤、draft/冲突标记) | 否 |
 | `gitlab_get_mr` | MR 详情:合并状态、CI 流水线、冲突、squash | 否 |
 | `gitlab_get_mr_changes` | 变更文件及逐文件 diff | 否 |
+| `gitlab_get_mr_approvals` | 批准状态:批准人、还需/已需数量、逐规则状态 | 否 |
 | `gitlab_list_mr_discussions` | 评审讨论线(含评论与解决状态) | 否 |
 | `gitlab_list_commits` | 提交列表(分支/作者过滤) | 否 |
 | `gitlab_get_file` | 读取仓库文件(base64 解码、支持 ref) | 否 |
 | `gitlab_list_branches` | 分支列表及最新 SHA | 否 |
+| `gitlab_list_labels` | 项目标签及颜色 | 否 |
+| `gitlab_list_milestones` | 里程碑(截止日期与状态) | 否 |
+| `gitlab_list_releases` | Releases(标签、作者、日期) | 否 |
+| `gitlab_list_environments` | 部署环境(状态与外部 URL) | 否 |
 | `gitlab_list_pipelines` | CI/CD 流水线(ref/status 过滤) | 否 |
 | `gitlab_get_pipeline` | 流水线详情(含 stages) | 否 |
 | `gitlab_get_job_log` | Job 完整日志(UI 显示 terminal 卡片) | 否* |
@@ -93,6 +99,8 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_update_issue` | 打开/关闭 issue | 是 |
 | `gitlab_create_mr` | 创建 MR(支持 draft) | 是 |
 | `gitlab_comment_mr` | 评论 MR | 是 |
+| `gitlab_reply_mr_discussion` | 回复评审讨论线 | 是 |
+| `gitlab_resolve_mr_discussion` | 解决/取消解决评审讨论线 | 是 |
 | `gitlab_approve_mr` | 批准 MR(审批流) | 是 |
 | `gitlab_merge_mr` | 合并 MR(支持 squash) | 是 |
 | `gitlab_trigger_pipeline` | 为 ref 触发 CI/CD 流水线 | 是 |

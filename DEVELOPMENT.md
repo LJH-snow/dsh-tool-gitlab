@@ -25,7 +25,14 @@
 
 **写操作(10)**:`gitlab_create_issue`、`gitlab_comment_issue`、`gitlab_update_issue`、`gitlab_create_mr`、`gitlab_comment_mr`、`gitlab_approve_mr`、`gitlab_merge_mr`、`gitlab_trigger_pipeline`、`gitlab_create_branch`、`gitlab_write_file`
 
-**不在范围内**:项目管理(创建/删除项目)、成员增删改、MR 讨论线回复(后续版本考虑)。
+### 1.3 范围(v0.2)
+共 **7 个新增工具**(总 38 个),聚焦评审闭环与 DevOps 资产:
+
+**只读(5)**:`gitlab_get_mr_approvals`、`gitlab_list_labels`、`gitlab_list_milestones`、`gitlab_list_releases`、`gitlab_list_environments`
+
+**写操作(2)**:`gitlab_reply_mr_discussion`、`gitlab_resolve_mr_discussion`
+
+**不在范围内**(后续版本考虑):项目管理(创建/删除项目)、成员增删改。
 
 ## 2. 技术要点
 
@@ -82,18 +89,34 @@
 - [x] 差异化卡片:MR changes(search/paths)、write_file(diff)、job log(terminal)
 - 验收:`tests/tools.spec.ts` 15 例(工具清单精确断言、404 业务值、无 token 提示、错误映射、卡片呈现)全过 ✅;全仓 43/43 通过;typecheck ✅;build ✅;产物导出 `apply/createTools/inject/name` ✅
 
-### 阶段 4:文档与发布准备(进行中)
+### 阶段 4:文档与发布准备(已完成)
 - [x] `README.md`(英文):安装/配置/差异化对比表/工具表/行为约定/开发/发布
 - [x] `README.zh.md`(中文,同上)
 - [x] `examples/cordis.yml`:组合配置示例(token/baseUrl/timeoutMs,自托管注释)
-- [ ] `npm pack --dry-run` 打包验证
+- [x] `npm pack --dry-run` 打包验证(临时缓存目录):8 文件、23.3 kB,含 lib/ 产物与双语文档
 - [ ] 正式发布清单(需外部操作):`npm run build` → `npm publish --access public` → GitHub 仓库加 `dsh-plugin` topic
+
+### 阶段 5:v0.2 扩展(已完成)
+- [x] 客户端新增 7 方法:`getMrApprovals`、`replyToDiscussion`、`resolveDiscussion`、`listLabels`、`listMilestones`、`listReleases`、`listEnvironments`
+- [x] `src/index.ts` 注册 7 个新工具(总 38 个):MR 批准状态/讨论回复/讨论解决 + labels/milestones/releases/environments 列表
+- [x] 新工具全部实现参数 schema、规范输出、`render` 纯函数、`presentCall`/`presentResult`;写工具无 token 返回业务值
+- [x] 差异化卡片:`gitlab_list_environments` 用 `search/paths` 卡片;`gitlab_get_mr_approvals` 输出批准规则明细
+- [x] `tests/` 补齐新工具用例(client 37 + tools 19 = 56 全绿)
+- [x] `.github/workflows/ci.yml`:Node 22/24 矩阵,`npm ci` → typecheck → test → build
+- [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
+- 验收:typecheck ✅ / 56/56 ✅ / build ✅ / 打包 dry-run ✅(阶段 4 勾选)
 
 ## 4. 验证记录
 
 ### 2026-08-14
 - `npm install`(提权联网)✅ → `npm run typecheck` ✅(修复 5 处 labels/notes 可空类型) → `npm test` 43/43 ✅(client 28 + tools 15) → `npm run build` ✅
 - 产物验证:`node -e "import('./lib/index.js')"` 输出 `apply/createTools/inject/name`,`name: dsh-tool-gitlab`,`inject: ["tools"]` ✅
+
+### 2026-08-14(v0.2)
+- v0.2 扩展:新增 7 工具(总 38),补齐评审闭环(MR 批准/讨论回复/解决)与 DevOps 资产列表(labels/milestones/releases/environments)✅
+- 测试 56/56(client 37 + tools 19)✅;typecheck ✅;build ✅;产物导出不变 ✅
+- `.github/workflows/ci.yml` CI(矩阵 Node 22/24)✅
+- `npm pack --dry-run`(临时缓存 `/private/tmp/npm-pack-cache`):8 文件、23.3 kB,打包内容含 lib/ 与 README/LICENSE ✅
 
 ## 5. 风险与决策记录
 
@@ -104,3 +127,5 @@
 | 2026-08-14 | 企业差异化聚焦 5 大块 | MR 全流程/CI/CD/组与成员/Todo/自托管;放弃 stars/forks 等个人开发者向功能 |
 | 2026-08-14 | 沙箱内 npm install 网络受限 | 提权后正常;正式环境无此问题 |
 | 2026-08-14 | GitLab 无 GitHub 的 total_count | 搜索/列表类返回纯数组,输出不加 total 字段 |
+| 2026-08-14 | v0.2 纳入讨论回复/解决与批准状态 | 评审闭环高频场景;回复/解决沿用写工具契约(无 token 返回业务值) |
+| 2026-08-14 | 新增 GitHub Actions CI | Node 22/24 矩阵;CI 不跑 `npm pack`,发布仍走本地手工流程 |

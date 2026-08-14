@@ -49,10 +49,11 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 
 | Area | GitLab plugin tools | What the GitHub plugin has |
 |---|---|---|
-| Merge Request lifecycle | `gitlab_get_mr_changes` (per-file diffs), `gitlab_list_mr_discussions` (review threads), `gitlab_approve_mr`, `gitlab_merge_mr` (squash) | PR draft + merge only |
+| Merge Request lifecycle | `gitlab_get_mr_changes` (per-file diffs), `gitlab_list_mr_discussions` (review threads), `gitlab_reply_mr_discussion`, `gitlab_resolve_mr_discussion`, `gitlab_get_mr_approvals` (approval rules), `gitlab_approve_mr`, `gitlab_merge_mr` (squash) | PR draft + merge only |
 | CI/CD | `gitlab_list_pipelines`, `gitlab_get_pipeline` (stages), `gitlab_get_job_log` (full trace), `gitlab_trigger_pipeline` | workflow run list only |
 | Org & governance | `gitlab_list_group_projects`, `gitlab_list_subgroups`, `gitlab_list_group_members`, `gitlab_list_project_members` (Guest→Owner access levels) | — |
 | Personal workbench | `gitlab_list_todos` (assigned / approval-required / mentioned), `gitlab_get_current_user` | — |
+| Release & DevOps | `gitlab_list_releases`, `gitlab_list_milestones`, `gitlab_list_environments`, `gitlab_list_labels` | releases list only |
 | Self-managed | `baseUrl` override for on-premises GitLab | GitHub Enterprise baseUrl |
 | Review UX | `search`-card MR changes, `diff`-card file writes, `terminal`-card job logs | generic/search cards |
 
@@ -73,10 +74,15 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_list_mrs` | List merge requests (state filter, draft/conflict flags) | no |
 | `gitlab_get_mr` | MR details: merge status, CI pipeline, conflicts, squash | no |
 | `gitlab_get_mr_changes` | Changed files with per-file diff hunks | no |
+| `gitlab_get_mr_approvals` | Approval status: approvers, required/left, per-rule state | no |
 | `gitlab_list_mr_discussions` | Review threads with notes and resolution state | no |
 | `gitlab_list_commits` | Commits (branch/author filters) | no |
 | `gitlab_get_file` | Read a repository file (base64-decoded, ref support) | no |
 | `gitlab_list_branches` | Branches with latest SHAs | no |
+| `gitlab_list_labels` | Project labels with colors | no |
+| `gitlab_list_milestones` | Milestones with due dates and states | no |
+| `gitlab_list_releases` | Releases with tags, authors, and dates | no |
+| `gitlab_list_environments` | Deployment environments with states and URLs | no |
 | `gitlab_list_pipelines` | CI/CD pipelines (ref/status filters) | no |
 | `gitlab_get_pipeline` | Pipeline details with stages | no |
 | `gitlab_get_job_log` | Full job log trace (terminal card in UI) | no* |
@@ -93,6 +99,8 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_update_issue` | Open or close an issue | yes |
 | `gitlab_create_mr` | Create a merge request (draft supported) | yes |
 | `gitlab_comment_mr` | Comment on a merge request | yes |
+| `gitlab_reply_mr_discussion` | Reply to a review discussion thread | yes |
+| `gitlab_resolve_mr_discussion` | Resolve/unresolve a review discussion thread | yes |
 | `gitlab_approve_mr` | Approve a merge request (approval flow) | yes |
 | `gitlab_merge_mr` | Merge a merge request (squash supported) | yes |
 | `gitlab_trigger_pipeline` | Trigger a CI/CD pipeline for a ref | yes |

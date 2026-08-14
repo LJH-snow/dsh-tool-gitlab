@@ -805,6 +805,153 @@ export function createTools(client: GitlabClient) {
       },
     }),
 
+
+    defineTool({
+      name: 'gitlab_get_mr_approvals',
+      description: 'Get the approval status of a GitLab merge request: approved-by users, approvals required/left, and per-rule status. Enterprise approval workflow.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'MR iid, e.g. 7' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the MR exists' },
+            approved: { type: 'boolean', description: 'Whether the MR is fully approved' },
+            approvedBy: { type: 'array', items: { type: 'string' }, description: 'Usernames who approved' },
+            approvalsRequired: { type: 'integer', description: 'Total approvals required' },
+            approvalsLeft: { type: 'integer', description: 'Approvals still needed' },
+            rules: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: { type: 'string', description: 'Approval rule name' },
+                  ruleType: { type: 'string', description: 'Rule type, e.g. any_approver' },
+                  approvalsRequired: { type: 'integer', description: 'Approvals required by this rule' },
+                  approvalsLeft: { type: 'integer', description: 'Approvals left for this rule' },
+                  approved: { type: 'boolean', description: 'Whether this rule is satisfied' },
+                  approvedBy: { type: 'array', items: { type: 'string' }, description: 'Usernames who satisfied this rule' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Merge request not found.' }]
+          const lines = [
+            `approved: ${value.approved ? 'yes' : 'no'} (${value.approvalsRequired ?? 0} required, ${value.approvalsLeft ?? 0} left)`,
+            `approved by: ${(value.approvedBy ?? []).length > 0 ? (value.approvedBy ?? []).join(', ') : 'nobody yet'}`,
+            ...(value.rules ?? []).map(rule => `rule "${rule.name}" (${rule.ruleType}): ${rule.approved ? 'satisfied' : `${rule.approvalsLeft ?? 0} left`} — ${(rule.approvedBy ?? []).join(', ') || 'nobody'}`),
+          ]
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Approvals of MR !${args.iid}`, kind: 'read' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; approved?: boolean; approvalsLeft?: number; approvedBy?: string[] }
+        if (!v.found) return { card: 'generic', title: 'MR not found' }
+        const bits = [v.approved ? 'approved' : `needs ${v.approvalsLeft ?? 0} more`]
+        if ((v.approvedBy ?? []).length > 0) bits.push(`by ${(v.approvedBy ?? []).join(', ')}`)
+        return { card: 'generic', title: `MR !${_args.iid} approvals`, content: [{ type: 'text', text: bits.join(' · ') }] }
+      },
+      async execute(args, exec) {
+        try {
+          const info = await client.getMrApprovals(args.project, args.iid, exec.signal)
+          return { found: true, ...info }
+        } catch (error) {
+          if (error instanceof GitlabError && error.status === 404) {
+            return { found: false }
+          }
+          throw error
+        }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_reply_mr_discussion',
+      description: 'Reply to a review discussion thread on a GitLab merge request. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'MR iid, e.g. 7' },
+        discussionId: { type: 'string', required: true, description: 'Discussion thread id, e.g. from gitlab_list_mr_discussions' },
+        body: { type: 'string', required: true, description: 'Reply body (Markdown)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the reply was posted' },
+            noteId: { type: 'integer', description: 'Reply note id when posted' },
+            reason: { type: 'string', description: 'Explanation when not posted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Replied to discussion ${_args.discussionId} (note ${value.noteId}).` }]
+          return [{ type: 'text', text: `Could not reply: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Reply on MR !${args.iid}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; noteId?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: 'Reply posted', content: [{ type: 'text', text: `note ${v.noteId}` }] }
+        return { card: 'generic', title: 'Reply failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Replying to a discussion requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.replyToDiscussion(args.project, args.iid, args.discussionId, args.body, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_resolve_mr_discussion',
+      description: 'Resolve or unresolve a review discussion thread on a GitLab merge request. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'MR iid, e.g. 7' },
+        discussionId: { type: 'string', required: true, description: 'Discussion thread id, e.g. from gitlab_list_mr_discussions' },
+        resolved: { type: 'boolean', description: 'Resolve the thread (default true)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the thread was updated' },
+            reason: { type: 'string', description: 'Explanation when not updated' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Discussion ${_args.discussionId} ${_args.resolved === false ? 'unresolved' : 'resolved'}.` }]
+          return [{ type: 'text', text: `Could not update the discussion: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `${args.resolved === false ? 'Unresolve' : 'Resolve'} discussion on MR !${args.iid}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: 'Discussion updated' }
+        return { card: 'generic', title: 'Update failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Resolving a discussion requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.resolveDiscussion(args.project, args.iid, args.discussionId, args.resolved !== false, exec.signal)
+      },
+    }),
+
     defineTool({
       name: 'gitlab_list_commits',
       description: 'List recent commits of a GitLab project, optionally filtered by branch and author.',
@@ -951,6 +1098,236 @@ export function createTools(client: GitlabClient) {
       async execute(args, exec) {
         const limit = args.limit === undefined ? 20 : Math.max(1, Math.min(args.limit, 50))
         const items = await client.listBranches(args.project, { perPage: limit, signal: exec.signal })
+        return { items }
+      },
+    }),
+
+
+    defineTool({
+      name: 'gitlab_list_labels',
+      description: 'List labels of a GitLab project with their colors. Issue governance.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Maximum results, 1-50 (default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer', description: 'Label id' },
+                  name: { type: 'string', description: 'Label name' },
+                  color: { type: 'string', description: 'Label color, e.g. #1068bf' },
+                  description: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Label description' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No labels found.' }]
+          return [{ type: 'text', text: items.map(item => `${item.name} (${item.color})${item.description ? ` — ${item.description}` : ''}`).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Labels: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { items?: Array<{ name: string }> }
+        const items = v.items ?? []
+        if (items.length === 0) return { card: 'generic', title: 'No labels' }
+        return {
+          card: 'search',
+          shape: 'paths',
+          title: `${items.length} label(s)`,
+          paths: items.map(i => i.name),
+          truncated: false,
+          total: items.length,
+        }
+      },
+      async execute(args, exec) {
+        const limit = args.limit === undefined ? 20 : Math.max(1, Math.min(args.limit, 50))
+        const items = await client.listLabels(args.project, { perPage: limit, signal: exec.signal })
+        return { items }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_milestones',
+      description: 'List milestones of a GitLab project with due dates and progress states. Enterprise release planning.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        state: { type: 'string', enum: ['active', 'closed', 'all'], description: 'Milestone state (default active)' },
+        limit: { type: 'integer', description: 'Maximum results, 1-50 (default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer', description: 'Milestone id' },
+                  iid: { type: 'integer', description: 'Milestone iid' },
+                  title: { type: 'string', description: 'Milestone title' },
+                  state: { type: 'string', description: 'Milestone state' },
+                  dueDate: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Due date, YYYY-MM-DD' },
+                  startDate: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Start date, YYYY-MM-DD' },
+                  description: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Milestone description' },
+                  webUrl: { type: 'string', description: 'Milestone URL' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No milestones found.' }]
+          return [{ type: 'text', text: items.map(item => {
+            const due = item.dueDate ? ` due ${item.dueDate}` : ''
+            return `*${item.iid} ${item.title} (${item.state})${due}`
+          }).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Milestones: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { items?: Array<{ iid: number; title: string }> }
+        const items = v.items ?? []
+        if (items.length === 0) return { card: 'generic', title: 'No milestones' }
+        return {
+          card: 'generic',
+          title: `${items.length} milestone(s)`,
+          content: [{ type: 'text', text: items.map(i => `*${i.iid} ${i.title}`).join('\n') }],
+        }
+      },
+      async execute(args, exec) {
+        const limit = args.limit === undefined ? 20 : Math.max(1, Math.min(args.limit, 50))
+        const items = await client.listMilestones(args.project, { state: args.state, perPage: limit, signal: exec.signal })
+        return { items }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_releases',
+      description: 'List releases of a GitLab project with tags, authors, and release dates. Enterprise release management.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Maximum results, 1-50 (default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  tagName: { type: 'string', description: 'Tag name' },
+                  name: { type: 'string', description: 'Release name' },
+                  description: { type: 'string', description: 'Release notes' },
+                  releasedAt: { type: 'string', description: 'ISO release timestamp' },
+                  author: { type: 'string', description: 'Release author' },
+                  webUrl: { type: 'string', description: 'Release URL' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No releases found.' }]
+          return [{ type: 'text', text: items.map(item => `${item.tagName} — ${item.name} (${item.releasedAt ?? ''}, @${item.author})`).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Releases: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { items?: Array<{ tagName: string; name: string }> }
+        const items = v.items ?? []
+        if (items.length === 0) return { card: 'generic', title: 'No releases' }
+        return {
+          card: 'generic',
+          title: `${items.length} release(s)`,
+          content: [{ type: 'text', text: items.map(i => `${i.tagName} ${i.name}`).join('\n') }],
+        }
+      },
+      async execute(args, exec) {
+        const limit = args.limit === undefined ? 20 : Math.max(1, Math.min(args.limit, 50))
+        const items = await client.listReleases(args.project, { perPage: limit, signal: exec.signal })
+        return { items }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_environments',
+      description: 'List deployment environments of a GitLab project with states and external URLs. Enterprise DevOps visibility.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Maximum results, 1-50 (default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer', description: 'Environment id' },
+                  name: { type: 'string', description: 'Environment name' },
+                  slug: { type: 'string', description: 'Environment slug' },
+                  state: { type: 'string', description: 'Environment state' },
+                  externalUrl: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'External deployment URL' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No environments found.' }]
+          return [{ type: 'text', text: items.map(item => `${item.name} (${item.state})${item.externalUrl ? ` — ${item.externalUrl}` : ''}`).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Environments: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { items?: Array<{ name: string; state: string }> }
+        const items = v.items ?? []
+        if (items.length === 0) return { card: 'generic', title: 'No environments' }
+        return {
+          card: 'search',
+          shape: 'paths',
+          title: `${items.length} environment(s)`,
+          paths: items.map(i => `${i.name} (${i.state})`),
+          truncated: false,
+          total: items.length,
+        }
+      },
+      async execute(args, exec) {
+        const limit = args.limit === undefined ? 20 : Math.max(1, Math.min(args.limit, 50))
+        const items = await client.listEnvironments(args.project, { perPage: limit, signal: exec.signal })
         return { items }
       },
     }),
