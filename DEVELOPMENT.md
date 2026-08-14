@@ -32,7 +32,14 @@
 
 **写操作(2)**:`gitlab_reply_mr_discussion`、`gitlab_resolve_mr_discussion`
 
-**不在范围内**(后续版本考虑):项目管理(创建/删除项目)、成员增删改。
+### 1.4 范围(v0.3)
+共 **8 个新增工具**(总 46 个),聚焦项目与成员治理:
+
+**写操作(8)**:
+- 项目管理:`gitlab_create_project`、`gitlab_delete_project`
+- 成员治理:`gitlab_add_group_member`、`gitlab_update_group_member`、`gitlab_remove_group_member`、`gitlab_add_project_member`、`gitlab_update_project_member`、`gitlab_remove_project_member`
+
+**不在范围内**(后续版本考虑):项目转移/归档、组创建与删除、Webhook/CI 变量管理。
 
 ## 2. 技术要点
 
@@ -106,6 +113,15 @@
 - [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
 - 验收:typecheck ✅ / 56/56 ✅ / build ✅ / 打包 dry-run ✅(阶段 4 勾选)
 
+### 阶段 6:v0.3 扩展(已完成)
+- [x] 客户端新增 8 方法:`createProject`、`deleteProject`、`addGroupMember`、`updateGroupMember`、`removeGroupMember`、`addProjectMember`、`updateProjectMember`、`removeProjectMember`
+- [x] `accessLevelValue()` 助手:字符串 label(guest/reporter/developer/maintainer/owner)↔ 整数(10/20/30/40/50)
+- [x] `src/index.ts` 注册 8 个新工具(总 46 个),全部写工具带 token 检查与业务错误映射
+- [x] 差异化 UI:创建/更新成员 `kind: 'edit'`,删除项目/移除成员 `kind: 'delete'`(结果卡片无 kind 字段,仅调用卡片标注)
+- [x] `tests/` 补齐用例(client 45 + tools 24 = 69 全绿)
+- [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
+- 验收:typecheck ✅ / 69/69 ✅ / build ✅ / 产物导出 46 工具 ✅
+
 ## 4. 验证记录
 
 ### 2026-08-14
@@ -118,6 +134,15 @@
 - `.github/workflows/ci.yml` CI(矩阵 Node 22/24)✅
 - `npm pack --dry-run`(临时缓存 `/private/tmp/npm-pack-cache`):8 文件、23.3 kB,打包内容含 lib/ 与 README/LICENSE ✅
 
+### 2026-08-15(v0.3 规划)
+- 规划 v0.3:项目与成员治理 8 工具(创建/删除项目 + 组/项目成员增删改),全部写操作需 token,访问级别接受字符串 label 或整数
+
+### 2026-08-15(v0.3 实现)
+- 客户端 8 方法 + `accessLevelValue()` 助手;错误映射:创建 400/422、删除/移除 404、成员 400/404/409/422 → 业务值
+- 注册 8 工具(总 46):`gitlab_create_project`、`gitlab_delete_project`、`gitlab_add_group_member`、`gitlab_update_group_member`、`gitlab_remove_group_member`、`gitlab_add_project_member`、`gitlab_update_project_member`、`gitlab_remove_project_member`
+- 测试 69/69(client 45 + tools 24)✅;typecheck ✅;build ✅;README 中英同步 ✅
+- 踩坑:`GenericResultView` 无 `kind` 字段(仅 `GenericCallView` 有),删除标注只放 presentCall;`presentResult` 先校验 args,非法返回 undefined;204 响应需 `new Response(null, { status: 204 })`
+
 ## 5. 风险与决策记录
 
 | 时间 | 决策/风险 | 说明 |
@@ -129,3 +154,5 @@
 | 2026-08-14 | GitLab 无 GitHub 的 total_count | 搜索/列表类返回纯数组,输出不加 total 字段 |
 | 2026-08-14 | v0.2 纳入讨论回复/解决与批准状态 | 评审闭环高频场景;回复/解决沿用写工具契约(无 token 返回业务值) |
 | 2026-08-14 | 新增 GitHub Actions CI | Node 22/24 矩阵;CI 不跑 `npm pack`,发布仍走本地手工流程 |
+| 2026-08-15 | 删除项目/移除成员为破坏性操作 | 工具调用前需模型确认,UI 用 `kind: 'delete'` 标注;API 侧无法撤销,返回业务值明确结果 |
+| 2026-08-15 | 访问级别接受字符串或整数 | 模型传 label(guest→10 等)比记整数更不易错;`accessLevelValue()` 统一映射,非法值返回业务错误 |

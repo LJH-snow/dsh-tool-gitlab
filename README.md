@@ -51,7 +51,8 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 |---|---|---|
 | Merge Request lifecycle | `gitlab_get_mr_changes` (per-file diffs), `gitlab_list_mr_discussions` (review threads), `gitlab_reply_mr_discussion`, `gitlab_resolve_mr_discussion`, `gitlab_get_mr_approvals` (approval rules), `gitlab_approve_mr`, `gitlab_merge_mr` (squash) | PR draft + merge only |
 | CI/CD | `gitlab_list_pipelines`, `gitlab_get_pipeline` (stages), `gitlab_get_job_log` (full trace), `gitlab_trigger_pipeline` | workflow run list only |
-| Org & governance | `gitlab_list_group_projects`, `gitlab_list_subgroups`, `gitlab_list_group_members`, `gitlab_list_project_members` (Guest→Owner access levels) | — |
+| Org & governance | `gitlab_list_group_projects`, `gitlab_list_subgroups`, `gitlab_list_group_members`, `gitlab_list_project_members` (Guest→Owner access levels), `gitlab_add_*_member`, `gitlab_update_*_member`, `gitlab_remove_*_member` | — |
+| Project management | `gitlab_create_project`, `gitlab_delete_project` (delete-kind UI cards) | — |
 | Personal workbench | `gitlab_list_todos` (assigned / approval-required / mentioned), `gitlab_get_current_user` | — |
 | Release & DevOps | `gitlab_list_releases`, `gitlab_list_milestones`, `gitlab_list_environments`, `gitlab_list_labels` | releases list only |
 | Self-managed | `baseUrl` override for on-premises GitLab | GitHub Enterprise baseUrl |
@@ -106,6 +107,14 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_trigger_pipeline` | Trigger a CI/CD pipeline for a ref | yes |
 | `gitlab_create_branch` | Create a branch from a ref | yes |
 | `gitlab_write_file` | Create/update a file via a commit (diff card in UI) | yes |
+| `gitlab_create_project` | Create a project (visibility, namespace, README init) | yes |
+| `gitlab_delete_project` | Permanently delete a project (delete-kind UI card) | yes |
+| `gitlab_add_group_member` | Add a member to a group (guest→owner) | yes |
+| `gitlab_update_group_member` | Change a group member's access level | yes |
+| `gitlab_remove_group_member` | Remove a member from a group (delete-kind UI card) | yes |
+| `gitlab_add_project_member` | Add a member to a project (guest→owner) | yes |
+| `gitlab_update_project_member` | Change a project member's access level | yes |
+| `gitlab_remove_project_member` | Remove a member from a project (delete-kind UI card) | yes |
 
 ### Behavior contract (per the official execute contract)
 

@@ -301,8 +301,27 @@ export interface FileWriteResult {
   reason?: string
 }
 
+export interface ProjectCreateResult {
+  ok: boolean
+  id?: number
+  pathWithNamespace?: string
+  webUrl?: string
+  reason?: string
+}
+
+export interface ProjectDeleteResult {
+  deleted: boolean
+  reason?: string
+}
+
+export interface MemberWriteResult {
+  ok: boolean
+  reason?: string
+}
+
 export type IssueState = 'opened' | 'closed' | 'all'
 export type MrState = 'opened' | 'closed' | 'merged' | 'all'
+export type AccessLevelInput = string | number
 
 const ACCESS_LEVELS: Record<number, string> = {
   10: 'Guest',
@@ -314,6 +333,19 @@ const ACCESS_LEVELS: Record<number, string> = {
 
 export function accessLabel(level: number): string {
   return ACCESS_LEVELS[level] ?? `Level ${level}`
+}
+
+const LEVEL_LABELS: Record<string, number> = {
+  guest: 10,
+  reporter: 20,
+  developer: 30,
+  maintainer: 40,
+  owner: 50,
+}
+
+export function accessLevelValue(input: AccessLevelInput): number | undefined {
+  if (typeof input === 'number') return ACCESS_LEVELS[input] !== undefined ? input : undefined
+  return LEVEL_LABELS[input.trim().toLowerCase()]
 }
 
 export class GitlabError extends Error {
@@ -1124,6 +1156,156 @@ export class GitlabClient {
     } catch (error) {
       if (error instanceof GitlabError && (error.status === 400 || error.status === 422)) {
         return { ok: false, path, reason: 'Could not write the file (validation failed or the branch has conflicts).' }
+      }
+      throw error
+    }
+  }
+
+  async createProject(input: {
+    name: string
+    path?: string
+    namespaceId?: number
+    visibility?: 'private' | 'internal' | 'public'
+    description?: string
+    initializeWithReadme?: boolean
+    signal?: AbortSignal
+  }): Promise<ProjectCreateResult> {
+    try {
+      const data = await this.request<{ id: number; path_with_namespace: string; web_url: string }>(
+        '/projects',
+        {
+          method: 'POST',
+          body: {
+            name: input.name,
+            path: input.path,
+            namespace_id: input.namespaceId,
+            visibility: input.visibility,
+            description: input.description ?? '',
+            initialize_with_readme: input.initializeWithReadme ?? false,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, id: data.id, pathWithNamespace: data.path_with_namespace, webUrl: data.web_url }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the project (name taken or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async deleteProject(project: string, signal?: AbortSignal): Promise<ProjectDeleteResult> {
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}`, { method: 'DELETE', signal })
+      return { deleted: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { deleted: false, reason: 'Project not found.' }
+      }
+      throw error
+    }
+  }
+
+  async addGroupMember(group: string, input: { user: string; accessLevel: AccessLevelInput; signal?: AbortSignal }): Promise<MemberWriteResult> {
+    const accessLevel = accessLevelValue(input.accessLevel)
+    if (accessLevel === undefined) {
+      return { ok: false, reason: `Invalid access level "${input.accessLevel}". Use guest/reporter/developer/maintainer/owner or 10/20/30/40/50.` }
+    }
+    try {
+      await this.request<unknown>(`/groups/${encodeURIComponent(group)}/members`, {
+        method: 'POST',
+        body: { user_id: input.user, access_level: accessLevel },
+        signal: input.signal,
+      })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, reason: 'Could not add the member (user not found, already a member, or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async updateGroupMember(group: string, input: { userId: number; accessLevel: AccessLevelInput; signal?: AbortSignal }): Promise<MemberWriteResult> {
+    const accessLevel = accessLevelValue(input.accessLevel)
+    if (accessLevel === undefined) {
+      return { ok: false, reason: `Invalid access level "${input.accessLevel}". Use guest/reporter/developer/maintainer/owner or 10/20/30/40/50.` }
+    }
+    try {
+      await this.request<unknown>(`/groups/${encodeURIComponent(group)}/members/${input.userId}`, {
+        method: 'PUT',
+        body: { access_level: accessLevel },
+        signal: input.signal,
+      })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not update the member (not found or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async removeGroupMember(group: string, userId: number, signal?: AbortSignal): Promise<MemberWriteResult> {
+    try {
+      await this.request<unknown>(`/groups/${encodeURIComponent(group)}/members/${userId}`, { method: 'DELETE', signal })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 404)) {
+        return { ok: false, reason: 'Member not found in this group.' }
+      }
+      throw error
+    }
+  }
+
+  async addProjectMember(project: string, input: { user: string; accessLevel: AccessLevelInput; signal?: AbortSignal }): Promise<MemberWriteResult> {
+    const accessLevel = accessLevelValue(input.accessLevel)
+    if (accessLevel === undefined) {
+      return { ok: false, reason: `Invalid access level "${input.accessLevel}". Use guest/reporter/developer/maintainer/owner or 10/20/30/40/50.` }
+    }
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/members`, {
+        method: 'POST',
+        body: { user_id: input.user, access_level: accessLevel },
+        signal: input.signal,
+      })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, reason: 'Could not add the member (user not found, already a member, or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async updateProjectMember(project: string, input: { userId: number; accessLevel: AccessLevelInput; signal?: AbortSignal }): Promise<MemberWriteResult> {
+    const accessLevel = accessLevelValue(input.accessLevel)
+    if (accessLevel === undefined) {
+      return { ok: false, reason: `Invalid access level "${input.accessLevel}". Use guest/reporter/developer/maintainer/owner or 10/20/30/40/50.` }
+    }
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/members/${input.userId}`, {
+        method: 'PUT',
+        body: { access_level: accessLevel },
+        signal: input.signal,
+      })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not update the member (not found or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async removeProjectMember(project: string, userId: number, signal?: AbortSignal): Promise<MemberWriteResult> {
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/members/${userId}`, { method: 'DELETE', signal })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 404)) {
+        return { ok: false, reason: 'Member not found in this project.' }
       }
       throw error
     }

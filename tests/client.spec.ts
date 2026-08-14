@@ -448,4 +448,111 @@ describe('GitlabClient', () => {
     const rejected = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(400, {})) })
     expect((await rejected.writeFile('a/b', 'x', 'y', { message: 'm' })).ok).toBe(false)
   })
+
+  it('createProject POSTs name, namespace, and visibility', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 11, path_with_namespace: 'acme/widgets', web_url: 'https://gitlab.com/acme/widgets' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createProject({ name: 'Widgets', path: 'widgets', namespaceId: 5, visibility: 'private', initializeWithReadme: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/projects')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      name: 'Widgets',
+      path: 'widgets',
+      namespace_id: 5,
+      visibility: 'private',
+      initialize_with_readme: true,
+    })
+    expect(result).toEqual({ ok: true, id: 11, pathWithNamespace: 'acme/widgets', webUrl: 'https://gitlab.com/acme/widgets' })
+
+    const rejected = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(422, {})) })
+    expect((await rejected.createProject({ name: 'x' })).ok).toBe(false)
+  })
+
+  it('deleteProject DELETEs and maps 404 to deleted:false', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.deleteProject('a/b')).toEqual({ deleted: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/projects/a%2Fb')
+    expect(init.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.deleteProject('a/b')).toEqual({ deleted: false, reason: 'Project not found.' })
+  })
+
+  it('addGroupMember POSTs user and access level, rejecting invalid levels', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 1 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.addGroupMember('acme', { user: 'alice', accessLevel: 'maintainer' })).toEqual({ ok: true })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ user_id: 'alice', access_level: 40 })
+
+    const noLevel = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn() })
+    expect((await noLevel.addGroupMember('acme', { user: 'alice', accessLevel: 'superadmin' })).ok).toBe(false)
+  })
+
+  it('updateGroupMember PUTs the new access level and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { id: 1 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.updateGroupMember('acme', { userId: 42, accessLevel: 20 })).toEqual({ ok: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/groups/acme/members/42')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toEqual({ access_level: 20 })
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.updateGroupMember('acme', { userId: 42, accessLevel: 'owner' })).ok).toBe(false)
+  })
+
+  it('removeGroupMember DELETEs and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.removeGroupMember('acme', 42)).toEqual({ ok: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/groups/acme/members/42')
+    expect(init.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.removeGroupMember('acme', 42)).ok).toBe(false)
+  })
+
+  it('addProjectMember and updateProjectMember hit project member endpoints', async () => {
+    const addImpl = vi.fn(async () => jsonResponse(201, { id: 1 }))
+    const add = new GitlabClient({ token: 'glpat_test', fetchImpl: addImpl })
+    expect(await add.addProjectMember('a/b', { user: 7, accessLevel: 'developer' })).toEqual({ ok: true })
+    const [addUrl, addInit] = addImpl.mock.calls[0] as [string, RequestInit]
+    expect(addUrl).toContain('/projects/a%2Fb/members')
+    expect(JSON.parse(String(addInit.body))).toEqual({ user_id: 7, access_level: 30 })
+
+    const updImpl = vi.fn(async () => jsonResponse(200, { id: 1 }))
+    const upd = new GitlabClient({ token: 'glpat_test', fetchImpl: updImpl })
+    expect(await upd.updateProjectMember('a/b', { userId: 7, accessLevel: 'reporter' })).toEqual({ ok: true })
+    const [updUrl, updInit] = updImpl.mock.calls[0] as [string, RequestInit]
+    expect(updUrl).toContain('/projects/a%2Fb/members/7')
+    expect(updInit.method).toBe('PUT')
+    expect(JSON.parse(String(updInit.body))).toEqual({ access_level: 20 })
+  })
+
+  it('removeProjectMember DELETEs and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.removeProjectMember('a/b', 7)).toEqual({ ok: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/projects/a%2Fb/members/7')
+    expect(init.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.removeProjectMember('a/b', 7)).ok).toBe(false)
+  })
+
+  it('accessLevelValue maps labels and integers', async () => {
+    const { accessLevelValue } = await import('../src/client.ts')
+    expect(accessLevelValue('guest')).toBe(10)
+    expect(accessLevelValue('MAINTAINER')).toBe(40)
+    expect(accessLevelValue(50)).toBe(50)
+    expect(accessLevelValue('admin')).toBeUndefined()
+    expect(accessLevelValue(99)).toBeUndefined()
+  })
 })

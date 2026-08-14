@@ -2053,5 +2053,339 @@ export function createTools(client: GitlabClient) {
         return client.writeFile(args.project, args.path, args.content, { message: args.message, branch: args.branch, signal: exec.signal })
       },
     }),
+
+    defineTool({
+      name: 'gitlab_create_project',
+      description: 'Create a new GitLab project. WRITE operation: requires a token and creates a project on the remote.',
+      parameters: {
+        name: { type: 'string', required: true, description: 'Project name' },
+        path: { type: 'string', description: 'Project path (slug); defaults to the name' },
+        namespaceId: { type: 'integer', description: 'Namespace id (group) to create the project in; defaults to the user namespace' },
+        visibility: { type: 'string', enum: ['private', 'internal', 'public'], description: 'Visibility level (default private)' },
+        description: { type: 'string', description: 'Project description' },
+        initializeWithReadme: { type: 'boolean', description: 'Initialize with a README file (default false)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the project was created' },
+            id: { type: 'integer', description: 'Project id when created' },
+            pathWithNamespace: { type: 'string', description: 'Project path with namespace, e.g. group/project' },
+            webUrl: { type: 'string', description: 'Project URL when created' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created project ${value.pathWithNamespace}: ${value.webUrl}` }]
+          return [{ type: 'text', text: `Could not create the project: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create project: ${args.name}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; pathWithNamespace?: string; webUrl?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Project ${v.pathWithNamespace} created`, content: [{ type: 'text', text: v.webUrl ?? '' }] }
+        return { card: 'generic', title: 'Create project failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating a project requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createProject({
+          name: args.name,
+          path: args.path,
+          namespaceId: args.namespaceId,
+          visibility: args.visibility,
+          description: args.description,
+          initializeWithReadme: args.initializeWithReadme,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_project',
+      description: 'Permanently delete a GitLab project. DESTRUCTIVE operation: requires a token and cannot be undone.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            deleted: { type: 'boolean', description: 'Whether the project was deleted' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.deleted) return [{ type: 'text', text: 'Project deleted.' }]
+          return [{ type: 'text', text: `Could not delete the project: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete project: ${args.project}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { deleted?: boolean; reason?: string }
+        if (v.deleted) return { card: 'generic', title: 'Project deleted' }
+        return { card: 'generic', title: 'Delete project failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { deleted: false, reason: 'Deleting a project requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteProject(args.project, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_add_group_member',
+      description: 'Add a member to a GitLab group. WRITE operation: requires a token.',
+      parameters: {
+        group: { type: 'string', required: true, description: 'Group path or numeric group id' },
+        user: { type: 'string', required: true, description: 'User id, username, or email to add' },
+        accessLevel: {
+          type: 'string',
+          required: true,
+          enum: ['guest', 'reporter', 'developer', 'maintainer', 'owner'],
+          description: 'Access level (also accepts integers 10/20/30/40/50)',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the member was added' },
+            reason: { type: 'string', description: 'Explanation when not added' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Added ${_args.user} to group ${_args.group} as ${_args.accessLevel}.` }]
+          return [{ type: 'text', text: `Could not add the member: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Add ${args.user} to group ${args.group}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Member added to ${_args.group}` }
+        return { card: 'generic', title: 'Add member failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Adding a member requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.addGroupMember(args.group, { user: args.user, accessLevel: args.accessLevel, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_update_group_member',
+      description: 'Change a GitLab group member\'s access level. WRITE operation: requires a token.',
+      parameters: {
+        group: { type: 'string', required: true, description: 'Group path or numeric group id' },
+        userId: { type: 'integer', required: true, description: 'Numeric user id of the member' },
+        accessLevel: {
+          type: 'string',
+          required: true,
+          enum: ['guest', 'reporter', 'developer', 'maintainer', 'owner'],
+          description: 'New access level (also accepts integers 10/20/30/40/50)',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the member was updated' },
+            reason: { type: 'string', description: 'Explanation when not updated' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Updated user ${_args.userId} in group ${_args.group} to ${_args.accessLevel}.` }]
+          return [{ type: 'text', text: `Could not update the member: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Set ${args.userId} in ${args.group} to ${args.accessLevel}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Member ${_args.userId} updated in ${_args.group}` }
+        return { card: 'generic', title: 'Update member failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Updating a member requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.updateGroupMember(args.group, { userId: args.userId, accessLevel: args.accessLevel, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_remove_group_member',
+      description: 'Remove a member from a GitLab group. DESTRUCTIVE operation: requires a token.',
+      parameters: {
+        group: { type: 'string', required: true, description: 'Group path or numeric group id' },
+        userId: { type: 'integer', required: true, description: 'Numeric user id of the member' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the member was removed' },
+            reason: { type: 'string', description: 'Explanation when not removed' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Removed user ${_args.userId} from group ${_args.group}.` }]
+          return [{ type: 'text', text: `Could not remove the member: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Remove ${args.userId} from group ${args.group}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Member removed from ${_args.group}` }
+        return { card: 'generic', title: 'Remove member failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Removing a member requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.removeGroupMember(args.group, args.userId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_add_project_member',
+      description: 'Add a member to a GitLab project. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        user: { type: 'string', required: true, description: 'User id, username, or email to add' },
+        accessLevel: {
+          type: 'string',
+          required: true,
+          enum: ['guest', 'reporter', 'developer', 'maintainer', 'owner'],
+          description: 'Access level (also accepts integers 10/20/30/40/50)',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the member was added' },
+            reason: { type: 'string', description: 'Explanation when not added' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Added ${_args.user} to project ${_args.project} as ${_args.accessLevel}.` }]
+          return [{ type: 'text', text: `Could not add the member: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Add ${args.user} to project ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Member added to ${_args.project}` }
+        return { card: 'generic', title: 'Add member failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Adding a member requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.addProjectMember(args.project, { user: args.user, accessLevel: args.accessLevel, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_update_project_member',
+      description: 'Change a GitLab project member\'s access level. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        userId: { type: 'integer', required: true, description: 'Numeric user id of the member' },
+        accessLevel: {
+          type: 'string',
+          required: true,
+          enum: ['guest', 'reporter', 'developer', 'maintainer', 'owner'],
+          description: 'New access level (also accepts integers 10/20/30/40/50)',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the member was updated' },
+            reason: { type: 'string', description: 'Explanation when not updated' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Updated user ${_args.userId} in project ${_args.project} to ${_args.accessLevel}.` }]
+          return [{ type: 'text', text: `Could not update the member: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Set ${args.userId} in ${args.project} to ${args.accessLevel}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Member ${_args.userId} updated in ${_args.project}` }
+        return { card: 'generic', title: 'Update member failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Updating a member requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.updateProjectMember(args.project, { userId: args.userId, accessLevel: args.accessLevel, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_remove_project_member',
+      description: 'Remove a member from a GitLab project. DESTRUCTIVE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        userId: { type: 'integer', required: true, description: 'Numeric user id of the member' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the member was removed' },
+            reason: { type: 'string', description: 'Explanation when not removed' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Removed user ${_args.userId} from project ${_args.project}.` }]
+          return [{ type: 'text', text: `Could not remove the member: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Remove ${args.userId} from project ${args.project}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Member removed from ${_args.project}` }
+        return { card: 'generic', title: 'Remove member failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Removing a member requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.removeProjectMember(args.project, args.userId, exec.signal)
+      },
+    }),
   ]
 }

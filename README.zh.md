@@ -51,7 +51,8 @@ npm install /path/to/dsh-tool-gitlab
 |---|---|---|
 | MR 全生命周期 | `gitlab_get_mr_changes`(逐文件 diff)、`gitlab_list_mr_discussions`(评审讨论线)、`gitlab_reply_mr_discussion`、`gitlab_resolve_mr_discussion`、`gitlab_get_mr_approvals`(审批规则)、`gitlab_approve_mr`、`gitlab_merge_mr`(squash) | 仅 PR 草稿 + 合并 |
 | CI/CD | `gitlab_list_pipelines`、`gitlab_get_pipeline`(stages)、`gitlab_get_job_log`(完整日志)、`gitlab_trigger_pipeline` | 仅 workflow 运行列表 |
-| 组织与治理 | `gitlab_list_group_projects`、`gitlab_list_subgroups`、`gitlab_list_group_members`、`gitlab_list_project_members`(Guest→Owner 访问级别) | — |
+| 组织与治理 | `gitlab_list_group_projects`、`gitlab_list_subgroups`、`gitlab_list_group_members`、`gitlab_list_project_members`(Guest→Owner 访问级别)、`gitlab_add_*_member`、`gitlab_update_*_member`、`gitlab_remove_*_member` | — |
+| 项目管理 | `gitlab_create_project`、`gitlab_delete_project`(删除类 UI 卡片) | — |
 | 个人工作台 | `gitlab_list_todos`(指派/待批准/被提及)、`gitlab_get_current_user` | — |
 | 发布与 DevOps | `gitlab_list_releases`、`gitlab_list_milestones`、`gitlab_list_environments`、`gitlab_list_labels` | 仅 releases 列表 |
 | 自托管 | `baseUrl` 覆盖指向内网 GitLab | GitHub Enterprise baseUrl |
@@ -106,6 +107,14 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_trigger_pipeline` | 为 ref 触发 CI/CD 流水线 | 是 |
 | `gitlab_create_branch` | 从 ref 创建分支 | 是 |
 | `gitlab_write_file` | 通过 commit 创建/更新文件(UI 显示 diff 卡片) | 是 |
+| `gitlab_create_project` | 创建项目(可见性/命名空间/初始化 README) | 是 |
+| `gitlab_delete_project` | 永久删除项目(删除类 UI 卡片) | 是 |
+| `gitlab_add_group_member` | 添加组成员(guest→owner) | 是 |
+| `gitlab_update_group_member` | 修改组成员访问级别 | 是 |
+| `gitlab_remove_group_member` | 移除组成员(删除类 UI 卡片) | 是 |
+| `gitlab_add_project_member` | 添加项目成员(guest→owner) | 是 |
+| `gitlab_update_project_member` | 修改项目成员访问级别 | 是 |
+| `gitlab_remove_project_member` | 移除项目成员(删除类 UI 卡片) | 是 |
 
 ### 行为约定(遵循官方 execute 契约)
 

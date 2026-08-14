@@ -16,12 +16,16 @@ const tools = () => Object.fromEntries(createTools(new GitlabClient({ fetchImpl:
 describe('tool definitions', () => {
   it('registers the planned enterprise tool set', () => {
     expect(Object.keys(tools()).sort()).toEqual([
+      'gitlab_add_group_member',
+      'gitlab_add_project_member',
       'gitlab_approve_mr',
       'gitlab_comment_issue',
       'gitlab_comment_mr',
       'gitlab_create_branch',
       'gitlab_create_issue',
       'gitlab_create_mr',
+      'gitlab_create_project',
+      'gitlab_delete_project',
       'gitlab_get_current_user',
       'gitlab_get_file',
       'gitlab_get_issue',
@@ -47,12 +51,16 @@ describe('tool definitions', () => {
       'gitlab_list_subgroups',
       'gitlab_list_todos',
       'gitlab_merge_mr',
+      'gitlab_remove_group_member',
+      'gitlab_remove_project_member',
       'gitlab_reply_mr_discussion',
       'gitlab_resolve_mr_discussion',
       'gitlab_search_code',
       'gitlab_search_projects',
       'gitlab_trigger_pipeline',
+      'gitlab_update_group_member',
       'gitlab_update_issue',
+      'gitlab_update_project_member',
       'gitlab_write_file',
     ])
   })
@@ -220,5 +228,54 @@ describe('tool definitions', () => {
     await tool.execute({ project: 'a/b', limit: 999 }, exec())
     const [url] = fetchImpl.mock.calls[0] as [string]
     expect(url).toContain('per_page=20')
+  })
+
+  it('v0.3 write tools require a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(await map.gitlab_create_project.execute({ name: 'x' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_project.execute({ project: 'a/b' }, exec())).toMatchObject({ deleted: false })
+    expect(await map.gitlab_add_group_member.execute({ group: 'g', user: 'u', accessLevel: 'maintainer' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_update_group_member.execute({ group: 'g', userId: 1, accessLevel: 'owner' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_remove_group_member.execute({ group: 'g', userId: 1 }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_add_project_member.execute({ project: 'a/b', user: 'u', accessLevel: 'maintainer' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_update_project_member.execute({ project: 'a/b', userId: 1, accessLevel: 'owner' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_remove_project_member.execute({ project: 'a/b', userId: 1 }, exec())).toMatchObject({ ok: false })
+  })
+
+  it('v0.3 tools pass access levels through the client', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 1 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_add_group_member.execute({ group: 'acme', user: 'alice', accessLevel: 'developer' }, exec())
+    expect(result).toEqual({ ok: true })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ user_id: 'alice', access_level: 30 })
+  })
+
+  it('gitlab_create_project renders result and presentCall', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_create_project')!
+    const blocks = await (tool.output as { render: (a: unknown, v: any) => unknown }).render({}, { ok: true, pathWithNamespace: 'acme/widgets', webUrl: 'https://gitlab.com/acme/widgets' })
+    expect(JSON.stringify(blocks)).toContain('acme/widgets')
+    expect(tool.presentCall!({ name: 'Widgets' })).toMatchObject({ card: 'generic', kind: 'edit' })
+    expect(tool.presentResult!({ name: 'Widgets' }, { ok: true, pathWithNamespace: 'acme/widgets', webUrl: 'u' })).toMatchObject({ card: 'generic', title: 'Project acme/widgets created' })
+  })
+
+  it('gitlab_delete_project uses the delete kind and maps failures', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_delete_project')!
+    expect(tool.presentCall!({ project: 'a/b' })).toMatchObject({ card: 'generic', kind: 'delete' })
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    const mtool = createTools(missing).find(t => t.name === 'gitlab_delete_project')!
+    expect(await mtool.execute({ project: 'a/b' }, exec())).toMatchObject({ deleted: false, reason: 'Project not found.' })
+  })
+
+  it('member removal tools present the delete kind', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(map.gitlab_remove_group_member.presentCall!({ group: 'g', userId: 1 })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_remove_project_member.presentCall!({ project: 'a/b', userId: 1 })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_add_group_member.presentCall!({ group: 'g', user: 'u', accessLevel: 'guest' })).toMatchObject({ kind: 'edit' })
   })
 })
