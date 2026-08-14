@@ -53,6 +53,8 @@ npm install /path/to/dsh-tool-gitlab
 | CI/CD | `gitlab_list_pipelines`、`gitlab_get_pipeline`(stages)、`gitlab_get_job_log`(完整日志)、`gitlab_trigger_pipeline` | 仅 workflow 运行列表 |
 | 组织与治理 | `gitlab_list_group_projects`、`gitlab_list_subgroups`、`gitlab_list_group_members`、`gitlab_list_project_members`(Guest→Owner 访问级别)、`gitlab_add_*_member`、`gitlab_update_*_member`、`gitlab_remove_*_member` | — |
 | 项目管理 | `gitlab_create_project`、`gitlab_delete_project`(删除类 UI 卡片) | — |
+| 组管理 | `gitlab_create_group`、`gitlab_delete_group`;`gitlab_transfer_project`、`gitlab_archive_project`、`gitlab_unarchive_project` | — |
+| 自动化与 CI 配置 | `gitlab_list/create/delete_project_webhook`、`gitlab_list/create/update/delete_project_variable`(值永不暴露) | — |
 | 个人工作台 | `gitlab_list_todos`(指派/待批准/被提及)、`gitlab_get_current_user` | — |
 | 发布与 DevOps | `gitlab_list_releases`、`gitlab_list_milestones`、`gitlab_list_environments`、`gitlab_list_labels` | 仅 releases 列表 |
 | 自托管 | `baseUrl` 覆盖指向内网 GitLab | GitHub Enterprise baseUrl |
@@ -90,6 +92,8 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_search_code` | 项目内代码搜索(blob) | 私仓需要 |
 | `gitlab_get_current_user` | 当前认证用户 | 是 |
 | `gitlab_list_todos` | 待办(指派/待批准/被提及) | 是 |
+| `gitlab_list_project_webhooks` | Webhook URL 与启用事件类型(仅元数据) | 私有项目 |
+| `gitlab_list_project_variables` | CI/CD 变量 key 与选项——值永不返回 | 私有项目 |
 
 ### 写操作
 
@@ -115,6 +119,16 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_add_project_member` | 添加项目成员(guest→owner) | 是 |
 | `gitlab_update_project_member` | 修改项目成员访问级别 | 是 |
 | `gitlab_remove_project_member` | 移除项目成员(删除类 UI 卡片) | 是 |
+| `gitlab_create_group` | 创建组(可见性/path) | 是 |
+| `gitlab_delete_group` | 永久删除组及其全部项目(删除类 UI 卡片) | 是 |
+| `gitlab_transfer_project` | 转移项目到其他命名空间(move 类 UI 卡片) | 是 |
+| `gitlab_archive_project` | 归档项目(全员只读) | 是 |
+| `gitlab_unarchive_project` | 取消归档项目 | 是 |
+| `gitlab_create_project_webhook` | 创建 webhook 推送事件到 URL | 是 |
+| `gitlab_delete_project_webhook` | 删除 webhook(删除类 UI 卡片) | 是 |
+| `gitlab_create_project_variable` | 创建 CI/CD 变量(值只发送一次,不回显) | 是 |
+| `gitlab_update_project_variable` | 更新 CI/CD 变量(值不回显) | 是 |
+| `gitlab_delete_project_variable` | 删除 CI/CD 变量(删除类 UI 卡片) | 是 |
 
 ### 行为约定(遵循官方 execute 契约)
 

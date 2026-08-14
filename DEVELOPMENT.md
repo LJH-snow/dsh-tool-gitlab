@@ -39,7 +39,18 @@
 - 项目管理:`gitlab_create_project`、`gitlab_delete_project`
 - 成员治理:`gitlab_add_group_member`、`gitlab_update_group_member`、`gitlab_remove_group_member`、`gitlab_add_project_member`、`gitlab_update_project_member`、`gitlab_remove_project_member`
 
-**不在范围内**(后续版本考虑):项目转移/归档、组创建与删除、Webhook/CI 变量管理。
+### 1.5 范围(v0.4)
+共 **12 个新增工具**(总 58 个),聚焦组治理、项目生命周期与自动化配置:
+
+**组管理(2)**:`gitlab_create_group`、`gitlab_delete_group`
+
+**项目生命周期(3)**:`gitlab_transfer_project`、`gitlab_archive_project`、`gitlab_unarchive_project`
+
+**Webhook(3)**:`gitlab_list_project_webhooks`、`gitlab_create_project_webhook`、`gitlab_delete_project_webhook`
+
+**CI/CD 变量(4)**:`gitlab_list_project_variables`、`gitlab_create_project_variable`、`gitlab_update_project_variable`、`gitlab_delete_project_variable`
+
+**不在范围内**(后续版本考虑):Runner 管理、项目镜像/导出、容器仓库清理。
 
 ## 2. 技术要点
 
@@ -122,6 +133,15 @@
 - [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
 - 验收:typecheck ✅ / 69/69 ✅ / build ✅ / 产物导出 46 工具 ✅
 
+### 阶段 7:v0.4 扩展(已完成)
+- [x] 客户端新增 12 方法:`createGroup`、`deleteGroup`、`transferProject`、`archiveProject`、`unarchiveProject`、`listProjectWebhooks`、`createProjectWebhook`、`deleteProjectWebhook`、`listProjectVariables`、`createProjectVariable`、`updateProjectVariable`、`deleteProjectVariable`
+- [x] `src/index.ts` 注册 12 个新工具(总 58 个),全部写工具带 token 检查与业务错误映射
+- [x] 安全红线:CI 变量 **value 永不进入输出/渲染/日志**,列表只返回 key/类型/环境作用域
+- [x] 差异化 UI:删除类工具 `kind: 'delete'`,转移 `kind: 'move'`,Webhook/变量写操作用 `kind: 'edit'`
+- [x] `tests/` 补齐用例(client 56 + tools 31 = 87 全绿)
+- [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
+- 验收:typecheck ✅ / 87/87 ✅ / build ✅ / 产物导出 58 工具 ✅
+
 ## 4. 验证记录
 
 ### 2026-08-14
@@ -143,6 +163,16 @@
 - 测试 69/69(client 45 + tools 24)✅;typecheck ✅;build ✅;README 中英同步 ✅
 - 踩坑:`GenericResultView` 无 `kind` 字段(仅 `GenericCallView` 有),删除标注只放 presentCall;`presentResult` 先校验 args,非法返回 undefined;204 响应需 `new Response(null, { status: 204 })`
 
+### 2026-08-15(v0.4 规划)
+- 规划 v0.4:组管理(创建/删除)、项目生命周期(转移/归档/取消归档)、Webhook(列表/创建/删除)、CI 变量(列表/创建/更新/删除)共 12 工具
+- 安全决策:CI 变量 value 敏感,列表只暴露 key/类型/环境作用域,创建/更新不回显 value
+
+### 2026-08-15(v0.4 实现)
+- 客户端 12 方法 + 接口(Group/Webhook/Variable 系);错误映射:创建 400/422/409、删除 404 → 业务值
+- 注册 12 工具(总 58);列表工具无 token 返回 `{ found: true, authenticated: false, items: [] }`(与 getCurrentUser 模式一致)
+- 测试 87/87(client 56 + tools 31)✅;typecheck ✅;build ✅;README 中英同步 ✅
+- 踩坑:render 中 schema 推断属性为可选需 `?? []`/`?? ''` 兜底(与 v0.2/v0.3 记录一致)
+
 ## 5. 风险与决策记录
 
 | 时间 | 决策/风险 | 说明 |
@@ -156,3 +186,5 @@
 | 2026-08-14 | 新增 GitHub Actions CI | Node 22/24 矩阵;CI 不跑 `npm pack`,发布仍走本地手工流程 |
 | 2026-08-15 | 删除项目/移除成员为破坏性操作 | 工具调用前需模型确认,UI 用 `kind: 'delete'` 标注;API 侧无法撤销,返回业务值明确结果 |
 | 2026-08-15 | 访问级别接受字符串或整数 | 模型传 label(guest→10 等)比记整数更不易错;`accessLevelValue()` 统一映射,非法值返回业务错误 |
+| 2026-08-15 | CI 变量 value 永不回显 | value 属敏感凭据,输出/渲染/日志一律不包含;列表返回 key 元数据 |
+| 2026-08-15 | Webhook URL 会触发外部请求 | 创建 webhook 是向第三方 URL 推送事件的外发操作,工具描述明确标注;删除为破坏性操作 |

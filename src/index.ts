@@ -2387,5 +2387,543 @@ export function createTools(client: GitlabClient) {
         return client.removeProjectMember(args.project, args.userId, exec.signal)
       },
     }),
+
+    defineTool({
+      name: 'gitlab_create_group',
+      description: 'Create a new GitLab group. WRITE operation: requires a token.',
+      parameters: {
+        name: { type: 'string', required: true, description: 'Group name' },
+        path: { type: 'string', description: 'Group path (slug); defaults to the name' },
+        visibility: { type: 'string', enum: ['private', 'internal', 'public'], description: 'Visibility level (default private)' },
+        description: { type: 'string', description: 'Group description' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the group was created' },
+            id: { type: 'integer', description: 'Group id when created' },
+            fullPath: { type: 'string', description: 'Group full path, e.g. acme/platform' },
+            webUrl: { type: 'string', description: 'Group URL when created' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created group ${value.fullPath}: ${value.webUrl}` }]
+          return [{ type: 'text', text: `Could not create the group: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create group: ${args.name}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; fullPath?: string; webUrl?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Group ${v.fullPath} created`, content: [{ type: 'text', text: v.webUrl ?? '' }] }
+        return { card: 'generic', title: 'Create group failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating a group requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createGroup({ name: args.name, path: args.path, visibility: args.visibility, description: args.description, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_group',
+      description: 'Permanently delete a GitLab group and all its projects. DESTRUCTIVE operation: requires a token and cannot be undone.',
+      parameters: {
+        group: { type: 'string', required: true, description: 'Group path or numeric group id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            deleted: { type: 'boolean', description: 'Whether the group was deleted' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.deleted) return [{ type: 'text', text: 'Group deleted.' }]
+          return [{ type: 'text', text: `Could not delete the group: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete group: ${args.group}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { deleted?: boolean; reason?: string }
+        if (v.deleted) return { card: 'generic', title: 'Group deleted' }
+        return { card: 'generic', title: 'Delete group failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { deleted: false, reason: 'Deleting a group requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteGroup(args.group, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_transfer_project',
+      description: 'Transfer a GitLab project to another namespace (group or user). WRITE operation: requires a token and changes the project location.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        namespace: { type: 'string', required: true, description: 'Destination namespace path (e.g. "acme/platform") or numeric namespace id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the project was transferred' },
+            pathWithNamespace: { type: 'string', description: 'New project path with namespace' },
+            webUrl: { type: 'string', description: 'New project URL' },
+            reason: { type: 'string', description: 'Explanation when not transferred' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Transferred project to ${value.pathWithNamespace}: ${value.webUrl}` }]
+          return [{ type: 'text', text: `Could not transfer the project: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Transfer ${args.project} to ${args.namespace}`, kind: 'move' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; pathWithNamespace?: string; webUrl?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Project transferred to ${v.pathWithNamespace}`, content: [{ type: 'text', text: v.webUrl ?? '' }] }
+        return { card: 'generic', title: 'Transfer project failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Transferring a project requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.transferProject(args.project, args.namespace, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_archive_project',
+      description: 'Archive a GitLab project (read-only for everyone). WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the project was archived' },
+            archived: { type: 'boolean', description: 'Archived state after the call' },
+            reason: { type: 'string', description: 'Explanation when not archived' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Project archived (archived=${value.archived}).` }]
+          return [{ type: 'text', text: `Could not archive the project: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Archive project: ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Project ${_args.project} archived` }
+        return { card: 'generic', title: 'Archive project failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Archiving a project requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.archiveProject(args.project, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_unarchive_project',
+      description: 'Unarchive a GitLab project. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the project was unarchived' },
+            archived: { type: 'boolean', description: 'Archived state after the call' },
+            reason: { type: 'string', description: 'Explanation when not unarchived' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Project unarchived (archived=${value.archived}).` }]
+          return [{ type: 'text', text: `Could not unarchive the project: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Unarchive project: ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Project ${_args.project} unarchived` }
+        return { card: 'generic', title: 'Unarchive project failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Unarchiving a project requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.unarchiveProject(args.project, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_project_webhooks',
+      description: 'List project webhooks (URLs and enabled event types). Read-only; requires a token for private projects.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Max webhooks to return (1-20, default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer' },
+                  url: { type: 'string' },
+                  pushEvents: { type: 'boolean' },
+                  mergeRequestEvents: { type: 'boolean' },
+                  issueEvents: { type: 'boolean' },
+                  tagPushEvents: { type: 'boolean' },
+                  enableSslVerification: { type: 'boolean' },
+                  createdAt: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing webhooks requires a GitLab token for private projects.' }]
+          if ((value.items ?? []).length === 0) return [{ type: 'text', text: 'No webhooks configured for this project.' }]
+          const lines = (value.items ?? []).map((w: { id?: number; url?: string; pushEvents?: boolean; mergeRequestEvents?: boolean }) =>
+            `#${w.id ?? ''} ${w.url ?? ''} (push:${w.pushEvents ?? false}, mr:${w.mergeRequestEvents ?? false})`,
+          )
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `List webhooks: ${args.project}`, kind: 'read' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: Array<{ id: number; url: string }> }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} webhook(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        const limit = Math.max(1, Math.min(args.limit ?? 20, 20))
+        return client.listProjectWebhooks(args.project, { perPage: limit, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_create_project_webhook',
+      description: 'Create a project webhook that pushes events to a URL. WRITE operation: requires a token and will send events to the given URL.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        url: { type: 'string', required: true, description: 'Webhook target URL (must be HTTPS in production)' },
+        pushEvents: { type: 'boolean', description: 'Trigger on push events (default true)' },
+        mergeRequestEvents: { type: 'boolean', description: 'Trigger on merge request events (default false)' },
+        issueEvents: { type: 'boolean', description: 'Trigger on issue events (default false)' },
+        tagPushEvents: { type: 'boolean', description: 'Trigger on tag push events (default false)' },
+        enableSslVerification: { type: 'boolean', description: 'Verify the target SSL certificate (default true)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the webhook was created' },
+            id: { type: 'integer', description: 'Webhook id when created' },
+            url: { type: 'string', description: 'Webhook URL' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created webhook #${value.id} for ${value.url}` }]
+          return [{ type: 'text', text: `Could not create the webhook: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create webhook for ${args.project}`, kind: 'edit', rawInput: args.url }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Webhook #${v.id} created` }
+        return { card: 'generic', title: 'Create webhook failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating a webhook requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createProjectWebhook(args.project, {
+          url: args.url,
+          pushEvents: args.pushEvents,
+          mergeRequestEvents: args.mergeRequestEvents,
+          issueEvents: args.issueEvents,
+          tagPushEvents: args.tagPushEvents,
+          enableSslVerification: args.enableSslVerification,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_project_webhook',
+      description: 'Delete a project webhook. DESTRUCTIVE operation: requires a token; the URL stops receiving events.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        hookId: { type: 'integer', required: true, description: 'Webhook id (see gitlab_list_project_webhooks)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the webhook was deleted' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Webhook #${_args.hookId} deleted.` }]
+          return [{ type: 'text', text: `Could not delete the webhook: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete webhook #${args.hookId} from ${args.project}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Webhook #${_args.hookId} deleted` }
+        return { card: 'generic', title: 'Delete webhook failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Deleting a webhook requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteProjectWebhook(args.project, args.hookId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_project_variables',
+      description: 'List project CI/CD variables metadata (key, type, protection, masking). Values are never returned. Requires a token for private projects.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Max variables to return (1-100, default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  key: { type: 'string' },
+                  variableType: { type: 'string' },
+                  protected: { type: 'boolean' },
+                  masked: { type: 'boolean' },
+                  environmentScope: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing variables requires a GitLab token for private projects.' }]
+          if ((value.items ?? []).length === 0) return [{ type: 'text', text: 'No CI/CD variables configured for this project.' }]
+          const lines = (value.items ?? []).map((v: { key?: string; variableType?: string; protected?: boolean; masked?: boolean; environmentScope?: string }) =>
+            `${v.key ?? ''} (${v.variableType ?? 'env_var'}, protected:${v.protected ?? false}, masked:${v.masked ?? false}, scope:${v.environmentScope ?? '*'})`,
+          )
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `List CI/CD variables: ${args.project}`, kind: 'read' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: Array<{ key: string }> }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} variable(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        const limit = Math.max(1, Math.min(args.limit ?? 20, 100))
+        return client.listProjectVariables(args.project, { perPage: limit, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_create_project_variable',
+      description: 'Create a project CI/CD variable. WRITE operation: requires a token. The value is sent once and never returned by the plugin.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        key: { type: 'string', required: true, description: 'Variable key, e.g. DEPLOY_TOKEN' },
+        value: { type: 'string', required: true, description: 'Variable value (sent to GitLab, not echoed back)' },
+        variableType: { type: 'string', enum: ['env_var', 'file'], description: 'Variable type (default env_var)' },
+        protected: { type: 'boolean', description: 'Restrict to protected branches (default false)' },
+        masked: { type: 'boolean', description: 'Mask in job logs (default false)' },
+        environmentScope: { type: 'string', description: 'Environment scope (default *)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the variable was created' },
+            key: { type: 'string', description: 'Variable key' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created variable ${value.key}.` }]
+          return [{ type: 'text', text: `Could not create the variable: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create variable ${args.key} in ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; key?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Variable ${v.key} created` }
+        return { card: 'generic', title: 'Create variable failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating a variable requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createProjectVariable(args.project, {
+          key: args.key,
+          value: args.value,
+          variableType: args.variableType,
+          protected: args.protected,
+          masked: args.masked,
+          environmentScope: args.environmentScope,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_update_project_variable',
+      description: 'Update a project CI/CD variable value or options. WRITE operation: requires a token. The value is never returned by the plugin.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        key: { type: 'string', required: true, description: 'Variable key to update' },
+        value: { type: 'string', required: true, description: 'New variable value (sent to GitLab, not echoed back)' },
+        variableType: { type: 'string', enum: ['env_var', 'file'], description: 'Variable type' },
+        protected: { type: 'boolean', description: 'Restrict to protected branches' },
+        masked: { type: 'boolean', description: 'Mask in job logs' },
+        environmentScope: { type: 'string', description: 'Environment scope' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the variable was updated' },
+            key: { type: 'string', description: 'Variable key' },
+            reason: { type: 'string', description: 'Explanation when not updated' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Updated variable ${value.key}.` }]
+          return [{ type: 'text', text: `Could not update the variable: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Update variable ${args.key} in ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; key?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Variable ${v.key} updated` }
+        return { card: 'generic', title: 'Update variable failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Updating a variable requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.updateProjectVariable(args.project, {
+          key: args.key,
+          value: args.value,
+          variableType: args.variableType,
+          protected: args.protected,
+          masked: args.masked,
+          environmentScope: args.environmentScope,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_project_variable',
+      description: 'Delete a project CI/CD variable. DESTRUCTIVE operation: requires a token; jobs referencing the key will fail until recreated.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        key: { type: 'string', required: true, description: 'Variable key to delete' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the variable was deleted' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Deleted variable ${_args.key}.` }]
+          return [{ type: 'text', text: `Could not delete the variable: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete variable ${args.key} from ${args.project}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Variable ${_args.key} deleted` }
+        return { card: 'generic', title: 'Delete variable failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Deleting a variable requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteProjectVariable(args.project, args.key, exec.signal)
+      },
+    }),
   ]
 }

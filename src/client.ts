@@ -319,6 +319,74 @@ export interface MemberWriteResult {
   reason?: string
 }
 
+export interface GroupCreateResult {
+  ok: boolean
+  id?: number
+  fullPath?: string
+  webUrl?: string
+  reason?: string
+}
+
+export interface GroupDeleteResult {
+  deleted: boolean
+  reason?: string
+}
+
+export interface ProjectTransferResult {
+  ok: boolean
+  pathWithNamespace?: string
+  webUrl?: string
+  reason?: string
+}
+
+export interface ProjectArchiveResult {
+  ok: boolean
+  archived?: boolean
+  reason?: string
+}
+
+export interface WebhookItem {
+  id: number
+  url: string
+  pushEvents: boolean
+  mergeRequestEvents: boolean
+  issueEvents: boolean
+  tagPushEvents: boolean
+  enableSslVerification: boolean
+  createdAt: string
+}
+
+export interface WebhookListResult {
+  found: boolean
+  items: WebhookItem[]
+}
+
+export interface WebhookWriteResult {
+  ok: boolean
+  id?: number
+  url?: string
+  reason?: string
+}
+
+export interface VariableItem {
+  key: string
+  variableType: string
+  protected: boolean
+  masked: boolean
+  environmentScope: string
+}
+
+export interface VariableListResult {
+  found: boolean
+  items: VariableItem[]
+}
+
+export interface VariableWriteResult {
+  ok: boolean
+  key?: string
+  reason?: string
+}
+
 export type IssueState = 'opened' | 'closed' | 'all'
 export type MrState = 'opened' | 'closed' | 'merged' | 'all'
 export type AccessLevelInput = string | number
@@ -1306,6 +1374,272 @@ export class GitlabClient {
     } catch (error) {
       if (error instanceof GitlabError && (error.status === 404)) {
         return { ok: false, reason: 'Member not found in this project.' }
+      }
+      throw error
+    }
+  }
+
+  async createGroup(input: {
+    name: string
+    path?: string
+    visibility?: 'private' | 'internal' | 'public'
+    description?: string
+    signal?: AbortSignal
+  }): Promise<GroupCreateResult> {
+    try {
+      const data = await this.request<{ id: number; full_path: string; web_url: string }>(
+        '/groups',
+        {
+          method: 'POST',
+          body: {
+            name: input.name,
+            path: input.path,
+            visibility: input.visibility,
+            description: input.description ?? '',
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, id: data.id, fullPath: data.full_path, webUrl: data.web_url }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the group (path taken or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async deleteGroup(group: string, signal?: AbortSignal): Promise<GroupDeleteResult> {
+    try {
+      await this.request<unknown>(`/groups/${encodeURIComponent(group)}`, { method: 'DELETE', signal })
+      return { deleted: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { deleted: false, reason: 'Group not found.' }
+      }
+      throw error
+    }
+  }
+
+  async transferProject(project: string, namespace: string, signal?: AbortSignal): Promise<ProjectTransferResult> {
+    try {
+      const data = await this.request<{ path_with_namespace: string; web_url: string }>(
+        `/projects/${encodeURIComponent(project)}/transfer`,
+        { method: 'PUT', body: { namespace }, signal },
+      )
+      return { ok: true, pathWithNamespace: data.path_with_namespace, webUrl: data.web_url }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not transfer the project (namespace invalid or project not found).' }
+      }
+      throw error
+    }
+  }
+
+  async archiveProject(project: string, signal?: AbortSignal): Promise<ProjectArchiveResult> {
+    try {
+      const data = await this.request<{ archived: boolean }>(`/projects/${encodeURIComponent(project)}/archive`, { method: 'POST', signal })
+      return { ok: true, archived: data.archived }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Project not found.' }
+      }
+      throw error
+    }
+  }
+
+  async unarchiveProject(project: string, signal?: AbortSignal): Promise<ProjectArchiveResult> {
+    try {
+      const data = await this.request<{ archived: boolean }>(`/projects/${encodeURIComponent(project)}/unarchive`, { method: 'POST', signal })
+      return { ok: true, archived: data.archived }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Project not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listProjectWebhooks(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<WebhookListResult> {
+    try {
+      const data = await this.request<Array<{
+        id: number
+        url: string
+        push_events: boolean
+        merge_requests_events: boolean
+        issues_events: boolean
+        tag_push_events: boolean
+        enable_ssl_verification: boolean
+        created_at: string
+      }>>(`/projects/${encodeURIComponent(project)}/hooks?${this.pageParams(options.perPage)}`, { signal: options.signal })
+      return {
+        found: true,
+        items: data.map(item => ({
+          id: item.id,
+          url: item.url,
+          pushEvents: item.push_events,
+          mergeRequestEvents: item.merge_requests_events,
+          issueEvents: item.issues_events,
+          tagPushEvents: item.tag_push_events,
+          enableSslVerification: item.enable_ssl_verification,
+          createdAt: item.created_at,
+        })),
+      }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { found: false, items: [] }
+      }
+      throw error
+    }
+  }
+
+  async createProjectWebhook(project: string, input: {
+    url: string
+    pushEvents?: boolean
+    mergeRequestEvents?: boolean
+    issueEvents?: boolean
+    tagPushEvents?: boolean
+    enableSslVerification?: boolean
+    signal?: AbortSignal
+  }): Promise<WebhookWriteResult> {
+    try {
+      const data = await this.request<{ id: number; url: string }>(
+        `/projects/${encodeURIComponent(project)}/hooks`,
+        {
+          method: 'POST',
+          body: {
+            url: input.url,
+            push_events: input.pushEvents,
+            merge_requests_events: input.mergeRequestEvents,
+            issues_events: input.issueEvents,
+            tag_push_events: input.tagPushEvents,
+            enable_ssl_verification: input.enableSslVerification,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, id: data.id, url: data.url }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the webhook (invalid URL or project not found).' }
+      }
+      throw error
+    }
+  }
+
+  async deleteProjectWebhook(project: string, hookId: number, signal?: AbortSignal): Promise<WebhookWriteResult> {
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/hooks/${hookId}`, { method: 'DELETE', signal })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Webhook not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listProjectVariables(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<VariableListResult> {
+    try {
+      const data = await this.request<Array<{
+        key: string
+        variable_type: string
+        protected: boolean
+        masked: boolean
+        environment_scope: string
+      }>>(`/projects/${encodeURIComponent(project)}/variables?${this.pageParams(options.perPage)}`, { signal: options.signal })
+      return {
+        found: true,
+        items: data.map(item => ({
+          key: item.key,
+          variableType: item.variable_type,
+          protected: item.protected,
+          masked: item.masked,
+          environmentScope: item.environment_scope,
+        })),
+      }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { found: false, items: [] }
+      }
+      throw error
+    }
+  }
+
+  async createProjectVariable(project: string, input: {
+    key: string
+    value: string
+    variableType?: 'env_var' | 'file'
+    protected?: boolean
+    masked?: boolean
+    environmentScope?: string
+    signal?: AbortSignal
+  }): Promise<VariableWriteResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/variables`,
+        {
+          method: 'POST',
+          body: {
+            key: input.key,
+            value: input.value,
+            variable_type: input.variableType,
+            protected: input.protected,
+            masked: input.masked,
+            environment_scope: input.environmentScope,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, key: input.key }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the variable (key exists, invalid value, or project not found).' }
+      }
+      throw error
+    }
+  }
+
+  async updateProjectVariable(project: string, input: {
+    key: string
+    value: string
+    variableType?: 'env_var' | 'file'
+    protected?: boolean
+    masked?: boolean
+    environmentScope?: string
+    signal?: AbortSignal
+  }): Promise<VariableWriteResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/variables/${encodeURIComponent(input.key)}`,
+        {
+          method: 'PUT',
+          body: {
+            value: input.value,
+            variable_type: input.variableType,
+            protected: input.protected,
+            masked: input.masked,
+            environment_scope: input.environmentScope,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, key: input.key }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not update the variable (not found or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async deleteProjectVariable(project: string, key: string, signal?: AbortSignal): Promise<VariableWriteResult> {
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/variables/${encodeURIComponent(key)}`, { method: 'DELETE', signal })
+      return { ok: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Variable not found.' }
       }
       throw error
     }

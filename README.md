@@ -53,6 +53,8 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | CI/CD | `gitlab_list_pipelines`, `gitlab_get_pipeline` (stages), `gitlab_get_job_log` (full trace), `gitlab_trigger_pipeline` | workflow run list only |
 | Org & governance | `gitlab_list_group_projects`, `gitlab_list_subgroups`, `gitlab_list_group_members`, `gitlab_list_project_members` (Guest→Owner access levels), `gitlab_add_*_member`, `gitlab_update_*_member`, `gitlab_remove_*_member` | — |
 | Project management | `gitlab_create_project`, `gitlab_delete_project` (delete-kind UI cards) | — |
+| Group management | `gitlab_create_group`, `gitlab_delete_group`; `gitlab_transfer_project`, `gitlab_archive_project`, `gitlab_unarchive_project` | — |
+| Automation & CI config | `gitlab_list/create/delete_project_webhook`, `gitlab_list/create/update/delete_project_variable` (values never exposed) | — |
 | Personal workbench | `gitlab_list_todos` (assigned / approval-required / mentioned), `gitlab_get_current_user` | — |
 | Release & DevOps | `gitlab_list_releases`, `gitlab_list_milestones`, `gitlab_list_environments`, `gitlab_list_labels` | releases list only |
 | Self-managed | `baseUrl` override for on-premises GitLab | GitHub Enterprise baseUrl |
@@ -90,6 +92,8 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_search_code` | Blob code search inside a project | private projects |
 | `gitlab_get_current_user` | Authenticated user identity | yes |
 | `gitlab_list_todos` | Pending todos (assigned, approval-required, mentioned) | yes |
+| `gitlab_list_project_webhooks` | Webhook URLs and enabled event types (metadata only) | private projects |
+| `gitlab_list_project_variables` | CI/CD variable keys and options — values are never returned | private projects |
 
 ### Write operations
 
@@ -115,6 +119,16 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_add_project_member` | Add a member to a project (guest→owner) | yes |
 | `gitlab_update_project_member` | Change a project member's access level | yes |
 | `gitlab_remove_project_member` | Remove a member from a project (delete-kind UI card) | yes |
+| `gitlab_create_group` | Create a group (visibility, path) | yes |
+| `gitlab_delete_group` | Permanently delete a group and all its projects (delete-kind UI card) | yes |
+| `gitlab_transfer_project` | Transfer a project to another namespace (move-kind UI card) | yes |
+| `gitlab_archive_project` | Archive a project (read-only for everyone) | yes |
+| `gitlab_unarchive_project` | Unarchive a project | yes |
+| `gitlab_create_project_webhook` | Create a webhook that pushes events to a URL | yes |
+| `gitlab_delete_project_webhook` | Delete a webhook (delete-kind UI card) | yes |
+| `gitlab_create_project_variable` | Create a CI/CD variable (value sent once, never echoed) | yes |
+| `gitlab_update_project_variable` | Update a CI/CD variable (value never echoed) | yes |
+| `gitlab_delete_project_variable` | Delete a CI/CD variable (delete-kind UI card) | yes |
 
 ### Behavior contract (per the official execute contract)
 

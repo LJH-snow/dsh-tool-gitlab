@@ -19,13 +19,20 @@ describe('tool definitions', () => {
       'gitlab_add_group_member',
       'gitlab_add_project_member',
       'gitlab_approve_mr',
+      'gitlab_archive_project',
       'gitlab_comment_issue',
       'gitlab_comment_mr',
       'gitlab_create_branch',
+      'gitlab_create_group',
       'gitlab_create_issue',
       'gitlab_create_mr',
       'gitlab_create_project',
+      'gitlab_create_project_variable',
+      'gitlab_create_project_webhook',
+      'gitlab_delete_group',
       'gitlab_delete_project',
+      'gitlab_delete_project_variable',
+      'gitlab_delete_project_webhook',
       'gitlab_get_current_user',
       'gitlab_get_file',
       'gitlab_get_issue',
@@ -47,6 +54,8 @@ describe('tool definitions', () => {
       'gitlab_list_mrs',
       'gitlab_list_pipelines',
       'gitlab_list_project_members',
+      'gitlab_list_project_variables',
+      'gitlab_list_project_webhooks',
       'gitlab_list_releases',
       'gitlab_list_subgroups',
       'gitlab_list_todos',
@@ -57,10 +66,13 @@ describe('tool definitions', () => {
       'gitlab_resolve_mr_discussion',
       'gitlab_search_code',
       'gitlab_search_projects',
+      'gitlab_transfer_project',
       'gitlab_trigger_pipeline',
+      'gitlab_unarchive_project',
       'gitlab_update_group_member',
       'gitlab_update_issue',
       'gitlab_update_project_member',
+      'gitlab_update_project_variable',
       'gitlab_write_file',
     ])
   })
@@ -277,5 +289,86 @@ describe('tool definitions', () => {
     expect(map.gitlab_remove_group_member.presentCall!({ group: 'g', userId: 1 })).toMatchObject({ kind: 'delete' })
     expect(map.gitlab_remove_project_member.presentCall!({ project: 'a/b', userId: 1 })).toMatchObject({ kind: 'delete' })
     expect(map.gitlab_add_group_member.presentCall!({ group: 'g', user: 'u', accessLevel: 'guest' })).toMatchObject({ kind: 'edit' })
+  })
+
+  it('v0.4 write tools require a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(await map.gitlab_create_group.execute({ name: 'x' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_group.execute({ group: 'g' }, exec())).toMatchObject({ deleted: false })
+    expect(await map.gitlab_transfer_project.execute({ project: 'a/b', namespace: 'g' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_archive_project.execute({ project: 'a/b' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_unarchive_project.execute({ project: 'a/b' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_create_project_webhook.execute({ project: 'a/b', url: 'https://example.com/hook' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_project_webhook.execute({ project: 'a/b', hookId: 1 }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_create_project_variable.execute({ project: 'a/b', key: 'K', value: 'v' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_update_project_variable.execute({ project: 'a/b', key: 'K', value: 'v' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_project_variable.execute({ project: 'a/b', key: 'K' }, exec())).toMatchObject({ ok: false })
+  })
+
+  it('v0.4 read tools report unauthenticated without a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(await map.gitlab_list_project_webhooks.execute({ project: 'a/b' }, exec())).toMatchObject({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_list_project_variables.execute({ project: 'a/b' }, exec())).toMatchObject({ found: true, authenticated: false, items: [] })
+  })
+
+  it('gitlab_create_group passes visibility and path', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 3, full_path: 'acme/platform', web_url: 'https://gitlab.com/acme/platform' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_create_group.execute({ name: 'Platform', path: 'platform', visibility: 'private' }, exec())
+    expect(result).toEqual({ ok: true, id: 3, fullPath: 'acme/platform', webUrl: 'https://gitlab.com/acme/platform' })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ name: 'Platform', path: 'platform', visibility: 'private' })
+  })
+
+  it('gitlab_transfer_project presents a move kind and renders the new path', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_transfer_project')!
+    expect(tool.presentCall!({ project: 'a/b', namespace: 'acme' })).toMatchObject({ card: 'generic', kind: 'move' })
+    const blocks = await (tool.output as { render: (a: unknown, v: any) => unknown }).render({}, { ok: true, pathWithNamespace: 'acme/b', webUrl: 'u' })
+    expect(JSON.stringify(blocks)).toContain('acme/b')
+  })
+
+  it('gitlab_create_project_webhook sends the URL and event flags', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 9, url: 'https://example.com/hook' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_create_project_webhook.execute({ project: 'a/b', url: 'https://example.com/hook', pushEvents: true, mergeRequestEvents: true }, exec())
+    expect(result).toEqual({ ok: true, id: 9, url: 'https://example.com/hook' })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ url: 'https://example.com/hook', push_events: true, merge_requests_events: true })
+  })
+
+  it('gitlab_list_project_variables never leaks values', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [{ key: 'DEPLOY_TOKEN', variable_type: 'env_var', protected: true, masked: true, environment_scope: '*' }]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_list_project_variables.execute({ project: 'a/b' }, exec())
+    expect(result).toEqual({
+      found: true,
+      items: [{ key: 'DEPLOY_TOKEN', variableType: 'env_var', protected: true, masked: true, environmentScope: '*' }],
+    })
+    expect(JSON.stringify(result)).not.toContain('value')
+  })
+
+  it('gitlab_create_project_variable returns only the key, not the value', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { key: 'TOKEN', value: 'supersecret' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_create_project_variable.execute({ project: 'a/b', key: 'TOKEN', value: 'supersecret' }, exec())
+    expect(result).toEqual({ ok: true, key: 'TOKEN' })
+    expect(JSON.stringify(result)).not.toContain('supersecret')
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ key: 'TOKEN', value: 'supersecret' })
+  })
+
+  it('delete tools present the delete kind', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(map.gitlab_delete_group.presentCall!({ group: 'g' })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_delete_project_webhook.presentCall!({ project: 'a/b', hookId: 1 })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_delete_project_variable.presentCall!({ project: 'a/b', key: 'K' })).toMatchObject({ kind: 'delete' })
   })
 })

@@ -555,4 +555,143 @@ describe('GitlabClient', () => {
     expect(accessLevelValue('admin')).toBeUndefined()
     expect(accessLevelValue(99)).toBeUndefined()
   })
+
+  it('createGroup POSTs name, path, and visibility', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 3, full_path: 'acme/platform', web_url: 'https://gitlab.com/acme/platform' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createGroup({ name: 'Platform', path: 'platform', visibility: 'internal' })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/groups')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toMatchObject({ name: 'Platform', path: 'platform', visibility: 'internal' })
+    expect(result).toEqual({ ok: true, id: 3, fullPath: 'acme/platform', webUrl: 'https://gitlab.com/acme/platform' })
+
+    const rejected = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(422, {})) })
+    expect((await rejected.createGroup({ name: 'x' })).ok).toBe(false)
+  })
+
+  it('deleteGroup DELETEs and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.deleteGroup('acme')).toEqual({ deleted: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/groups/acme')
+    expect(init.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.deleteGroup('acme')).toEqual({ deleted: false, reason: 'Group not found.' })
+  })
+
+  it('transferProject PUTs the namespace and maps failures', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { path_with_namespace: 'acme/widgets', web_url: 'https://gitlab.com/acme/widgets' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.transferProject('legacy/widgets', 'acme')
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/projects/legacy%2Fwidgets/transfer')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toEqual({ namespace: 'acme' })
+    expect(result).toEqual({ ok: true, pathWithNamespace: 'acme/widgets', webUrl: 'https://gitlab.com/acme/widgets' })
+
+    const rejected = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(400, {})) })
+    expect((await rejected.transferProject('a/b', 'x')).ok).toBe(false)
+  })
+
+  it('archiveProject and unarchiveProject POST and map 404', async () => {
+    const archiver = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(201, { archived: true })) })
+    expect(await archiver.archiveProject('a/b')).toEqual({ ok: true, archived: true })
+    const unarchiver = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(201, { archived: false })) })
+    expect(await unarchiver.unarchiveProject('a/b')).toEqual({ ok: true, archived: false })
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.archiveProject('a/b')).ok).toBe(false)
+    expect((await missing.unarchiveProject('a/b')).ok).toBe(false)
+  })
+
+  it('listProjectWebhooks maps event flags and 404 to found:false', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [{
+      id: 1, url: 'https://example.com/hook', push_events: true, merge_requests_events: false,
+      issues_events: true, tag_push_events: false, enable_ssl_verification: true, created_at: '2026-01-01T00:00:00Z',
+    }]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.listProjectWebhooks('a/b')
+    expect(result).toEqual({
+      found: true,
+      items: [{ id: 1, url: 'https://example.com/hook', pushEvents: true, mergeRequestEvents: false, issueEvents: true, tagPushEvents: false, enableSslVerification: true, createdAt: '2026-01-01T00:00:00Z' }],
+    })
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.listProjectWebhooks('a/b')).toEqual({ found: false, items: [] })
+  })
+
+  it('createProjectWebhook POSTs url and flags, deleteProjectWebhook DELETEs', async () => {
+    const createImpl = vi.fn(async () => jsonResponse(201, { id: 9, url: 'https://example.com/hook' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl: createImpl })
+    expect(await client.createProjectWebhook('a/b', { url: 'https://example.com/hook', pushEvents: true, mergeRequestEvents: true }))
+      .toEqual({ ok: true, id: 9, url: 'https://example.com/hook' })
+    const [, init] = createImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ url: 'https://example.com/hook', push_events: true, merge_requests_events: true })
+
+    const delImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const deleter = new GitlabClient({ token: 'glpat_test', fetchImpl: delImpl })
+    expect(await deleter.deleteProjectWebhook('a/b', 9)).toEqual({ ok: true })
+    const [delUrl, delInit] = delImpl.mock.calls[0] as [string, RequestInit]
+    expect(delUrl).toContain('/projects/a%2Fb/hooks/9')
+    expect(delInit.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.deleteProjectWebhook('a/b', 9)).ok).toBe(false)
+  })
+
+  it('listProjectVariables returns metadata only and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [{
+      key: 'DEPLOY_TOKEN', variable_type: 'env_var', protected: true, masked: true, environment_scope: 'production',
+    }]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.listProjectVariables('a/b')
+    expect(result).toEqual({
+      found: true,
+      items: [{ key: 'DEPLOY_TOKEN', variableType: 'env_var', protected: true, masked: true, environmentScope: 'production' }],
+    })
+    expect(JSON.stringify(result)).not.toContain('value')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.listProjectVariables('a/b')).toEqual({ found: false, items: [] })
+  })
+
+  it('createProjectVariable sends value but returns only the key', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { key: 'TOKEN', value: 'supersecret' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createProjectVariable('a/b', { key: 'TOKEN', value: 'supersecret', protected: true, masked: true })
+    expect(result).toEqual({ ok: true, key: 'TOKEN' })
+    expect(JSON.stringify(result)).not.toContain('supersecret')
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ key: 'TOKEN', value: 'supersecret', protected: true, masked: true })
+
+    const rejected = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(409, {})) })
+    expect((await rejected.createProjectVariable('a/b', { key: 'K', value: 'v' })).ok).toBe(false)
+  })
+
+  it('updateProjectVariable PUTs the key and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { key: 'TOKEN', value: 'new' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.updateProjectVariable('a/b', { key: 'TOKEN', value: 'new', environmentScope: 'production' })).toEqual({ ok: true, key: 'TOKEN' })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/projects/a%2Fb/variables/TOKEN')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toMatchObject({ value: 'new', environment_scope: 'production' })
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.updateProjectVariable('a/b', { key: 'K', value: 'v' })).ok).toBe(false)
+  })
+
+  it('deleteProjectVariable DELETEs and maps 404', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    expect(await client.deleteProjectVariable('a/b', 'TOKEN')).toEqual({ ok: true })
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/projects/a%2Fb/variables/TOKEN')
+    expect(init.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.deleteProjectVariable('a/b', 'TOKEN')).ok).toBe(false)
+  })
 })
