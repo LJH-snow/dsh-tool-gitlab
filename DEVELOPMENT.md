@@ -52,6 +52,17 @@
 
 **不在范围内**(后续版本考虑):Runner 管理、项目镜像/导出、容器仓库清理。
 
+### 1.6 范围(v0.5)
+共 **12 个新增工具**(总 70 个),把上一阶段的"后续版本考虑"落地为 Runner、容器仓库、项目镜像/导出三大块:
+
+**Runner 管理(4)**:`gitlab_list_runners`、`gitlab_enable_project_runner`、`gitlab_disable_project_runner`、`gitlab_delete_runner`
+
+**容器仓库(4)**:`gitlab_list_registry_repositories`、`gitlab_list_registry_tags`、`gitlab_delete_registry_repository`、`gitlab_delete_registry_tag`
+
+**项目镜像/导出(4)**:`gitlab_list_project_mirrors`、`gitlab_create_project_mirror`、`gitlab_start_project_export`、`gitlab_get_project_export_status`
+
+安全红线:远程镜像 URL 可能包含凭据,列表/创建/渲染一律不回显 URL。
+
 ## 2. 技术要点
 
 ### 2.1 API 基础
@@ -142,6 +153,15 @@
 - [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
 - 验收:typecheck ✅ / 87/87 ✅ / build ✅ / 产物导出 58 工具 ✅
 
+### 阶段 8:v0.5 扩展(已完成)
+- [x] 客户端新增 12 方法:`listRunners`、`enableProjectRunner`、`disableProjectRunner`、`deleteRunner`、`listRegistryRepositories`、`listRegistryTags`、`deleteRegistryRepository`、`deleteRegistryTag`、`listRemoteMirrors`、`createRemoteMirror`、`startProjectExport`、`getProjectExportStatus`
+- [x] `src/index.ts` 注册 12 个新工具(总 70 个):Runner/容器仓库/远程镜像/项目导出
+- [x] 安全红线:远程镜像 URL 可能带凭据,客户端只返回 id/启用状态/同步状态/错误,列表与创建渲染均不包含 URL
+- [x] 差异化 UI:删除 Runner/删除仓库/删除 tag 用 `kind: 'delete'`,启用/禁用 Runner、创建镜像、启动导出用 `kind: 'edit'`
+- [x] `tests/` 补齐用例(client 61 + tools 37 = 98 全绿)
+- [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
+- 验收:typecheck ✅ / 98/98 ✅ / build ✅ / 产物导出 70 工具 ✅
+
 ## 4. 验证记录
 
 ### 2026-08-14
@@ -173,6 +193,16 @@
 - 测试 87/87(client 56 + tools 31)✅;typecheck ✅;build ✅;README 中英同步 ✅
 - 踩坑:render 中 schema 推断属性为可选需 `?? []`/`?? ''` 兜底(与 v0.2/v0.3 记录一致)
 
+### 2026-08-25(v0.5 规划)
+- 规划 v0.5:落地 v0.4 标注的后续范围( Runner/容器仓库/项目镜像/导出 ),共 12 工具
+- 安全决策:远程镜像 URL 可能包含账号密码,列表与创建结果都不回显 URL
+
+### 2026-08-25(v0.5 实现)
+- 客户端 12 方法 + 接口(Runner/Registry/RemoteMirror/Export 系);错误映射:写操作 400/404/409/422、删除 404 → 业务值
+- 注册 12 工具(总 70);Runner/Registry 列表和远程镜像列表无 token 返回 `{ found: true, authenticated: false, items: [] }`
+- 测试 98/98(client 61 + tools 37)✅;typecheck ✅;build ✅;README 中英同步 ✅
+- 踩坑:输出 schema 的可空字段在 render 内联 map 回调中需要显式 `| null`,否则 strict 模式类型推断报错
+
 ## 5. 风险与决策记录
 
 | 时间 | 决策/风险 | 说明 |
@@ -188,3 +218,5 @@
 | 2026-08-15 | 访问级别接受字符串或整数 | 模型传 label(guest→10 等)比记整数更不易错;`accessLevelValue()` 统一映射,非法值返回业务错误 |
 | 2026-08-15 | CI 变量 value 永不回显 | value 属敏感凭据,输出/渲染/日志一律不包含;列表返回 key 元数据 |
 | 2026-08-15 | Webhook URL 会触发外部请求 | 创建 webhook 是向第三方 URL 推送事件的外发操作,工具描述明确标注;删除为破坏性操作 |
+| 2026-08-25 | 远程镜像 URL 可能含凭据 | 与 CI 变量同等对待:只发送 GitLab,列表/创建/渲染永不回显 URL |
+| 2026-08-25 | 删除 Runner/Registry 为破坏性操作 | 调用前 UI 用 `kind: 'delete'` 标注;删除 Runner 会影响所有已分配项目,描述中明确说明 |

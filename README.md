@@ -57,6 +57,7 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | Automation & CI config | `gitlab_list/create/delete_project_webhook`, `gitlab_list/create/update/delete_project_variable` (values never exposed) | — |
 | Personal workbench | `gitlab_list_todos` (assigned / approval-required / mentioned), `gitlab_get_current_user` | — |
 | Release & DevOps | `gitlab_list_releases`, `gitlab_list_milestones`, `gitlab_list_environments`, `gitlab_list_labels` | releases list only |
+| Runner, registry & backup | list/enable/disable/delete runners, registry repositories/tags, remote mirrors (URLs masked), project export status | — |
 | Self-managed | `baseUrl` override for on-premises GitLab | GitHub Enterprise baseUrl |
 | Review UX | `search`-card MR changes, `diff`-card file writes, `terminal`-card job logs | generic/search cards |
 
@@ -94,6 +95,11 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_list_todos` | Pending todos (assigned, approval-required, mentioned) | yes |
 | `gitlab_list_project_webhooks` | Webhook URLs and enabled event types (metadata only) | private projects |
 | `gitlab_list_project_variables` | CI/CD variable keys and options — values are never returned | private projects |
+| `gitlab_list_runners` | Runners assigned to a project (status, type, access level) | private projects |
+| `gitlab_list_registry_repositories` | Container registry repositories with tag counts | private projects |
+| `gitlab_list_registry_tags` | Container registry tags with digests and sizes | private projects |
+| `gitlab_list_project_mirrors` | Remote mirror settings; URLs and credentials are never returned | yes |
+| `gitlab_get_project_export_status` | Check an asynchronous project export status | yes |
 
 ### Write operations
 
@@ -129,6 +135,13 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_create_project_variable` | Create a CI/CD variable (value sent once, never echoed) | yes |
 | `gitlab_update_project_variable` | Update a CI/CD variable (value never echoed) | yes |
 | `gitlab_delete_project_variable` | Delete a CI/CD variable (delete-kind UI card) | yes |
+| `gitlab_enable_project_runner` | Enable an existing runner for a project | yes |
+| `gitlab_disable_project_runner` | Unassign a runner from a project | yes |
+| `gitlab_delete_runner` | Permanently delete a runner (delete-kind UI card) | yes |
+| `gitlab_delete_registry_repository` | Delete a registry repository and all tags (delete-kind UI card) | yes |
+| `gitlab_delete_registry_tag` | Delete a specific registry tag (delete-kind UI card) | yes |
+| `gitlab_create_project_mirror` | Create a remote mirror; mirror URL is sent once and never echoed | yes |
+| `gitlab_start_project_export` | Start an asynchronous project export | yes |
 
 ### Behavior contract (per the official execute contract)
 

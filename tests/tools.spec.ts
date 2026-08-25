@@ -27,12 +27,18 @@ describe('tool definitions', () => {
       'gitlab_create_issue',
       'gitlab_create_mr',
       'gitlab_create_project',
+      'gitlab_create_project_mirror',
       'gitlab_create_project_variable',
       'gitlab_create_project_webhook',
       'gitlab_delete_group',
       'gitlab_delete_project',
       'gitlab_delete_project_variable',
       'gitlab_delete_project_webhook',
+      'gitlab_delete_registry_repository',
+      'gitlab_delete_registry_tag',
+      'gitlab_delete_runner',
+      'gitlab_disable_project_runner',
+      'gitlab_enable_project_runner',
       'gitlab_get_current_user',
       'gitlab_get_file',
       'gitlab_get_issue',
@@ -42,6 +48,7 @@ describe('tool definitions', () => {
       'gitlab_get_mr_changes',
       'gitlab_get_pipeline',
       'gitlab_get_project',
+      'gitlab_get_project_export_status',
       'gitlab_list_branches',
       'gitlab_list_commits',
       'gitlab_list_environments',
@@ -54,9 +61,13 @@ describe('tool definitions', () => {
       'gitlab_list_mrs',
       'gitlab_list_pipelines',
       'gitlab_list_project_members',
+      'gitlab_list_project_mirrors',
       'gitlab_list_project_variables',
       'gitlab_list_project_webhooks',
+      'gitlab_list_registry_repositories',
+      'gitlab_list_registry_tags',
       'gitlab_list_releases',
+      'gitlab_list_runners',
       'gitlab_list_subgroups',
       'gitlab_list_todos',
       'gitlab_merge_mr',
@@ -66,6 +77,7 @@ describe('tool definitions', () => {
       'gitlab_resolve_mr_discussion',
       'gitlab_search_code',
       'gitlab_search_projects',
+      'gitlab_start_project_export',
       'gitlab_transfer_project',
       'gitlab_trigger_pipeline',
       'gitlab_unarchive_project',
@@ -370,5 +382,64 @@ describe('tool definitions', () => {
     expect(map.gitlab_delete_group.presentCall!({ group: 'g' })).toMatchObject({ kind: 'delete' })
     expect(map.gitlab_delete_project_webhook.presentCall!({ project: 'a/b', hookId: 1 })).toMatchObject({ kind: 'delete' })
     expect(map.gitlab_delete_project_variable.presentCall!({ project: 'a/b', key: 'K' })).toMatchObject({ kind: 'delete' })
+  })
+
+  it('v0.5 write tools require a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    expect(await map.gitlab_enable_project_runner.execute({ project: 'a/b', runnerId: 8 }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_disable_project_runner.execute({ project: 'a/b', runnerId: 8 }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_runner.execute({ runnerId: 8 }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_registry_repository.execute({ project: 'a/b', repositoryId: 1 }, exec())).toMatchObject({ deleted: false })
+    expect(await map.gitlab_delete_registry_tag.execute({ project: 'a/b', repositoryId: 1, tag: 'latest' }, exec())).toMatchObject({ deleted: false })
+    expect(await map.gitlab_create_project_mirror.execute({ project: 'a/b', url: 'https://example.com/repo.git' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_start_project_export.execute({ project: 'a/b' }, exec())).toMatchObject({ ok: false })
+  })
+
+  it('v0.5 read tools report unauthenticated without a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    expect(await map.gitlab_list_runners.execute({ project: 'a/b' }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_list_registry_repositories.execute({ project: 'a/b' }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_list_registry_tags.execute({ project: 'a/b', repositoryId: 1 }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_list_project_mirrors.execute({ project: 'a/b' }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_get_project_export_status.execute({ project: 'a/b' }, exec())).toEqual({ found: true, authenticated: false })
+  })
+
+  it('v0.5 list tools clamp limits and return found:false on 404', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, []))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    await map.gitlab_list_runners.execute({ project: 'a/b', limit: 999 }, exec())
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('per_page=50')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    const missingMap = Object.fromEntries(createTools(missing).map(t => [t.name, t]))
+    expect(await missingMap.gitlab_list_registry_repositories.execute({ project: 'a/b' }, exec())).toEqual({ found: false, authenticated: true, items: [] })
+    expect(await missingMap.gitlab_list_registry_tags.execute({ project: 'a/b', repositoryId: 1 }, exec())).toEqual({ found: false, authenticated: true, items: [] })
+  })
+
+  it('gitlab_create_project_mirror sends the URL but never echoes it', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 5, enabled: true, url: 'https://user:secret@example.com/repo.git' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const tool = createTools(client).find(t => t.name === 'gitlab_create_project_mirror')!
+    const result = await tool.execute({ project: 'a/b', url: 'https://user:secret@example.com/repo.git' }, exec())
+    expect(result).toEqual({ ok: true, id: 5, enabled: true })
+    expect(JSON.stringify(result)).not.toContain('secret')
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({ url: 'https://user:secret@example.com/repo.git' })
+  })
+
+  it('v0.5 destructive and edit tools present the right kind', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(map.gitlab_delete_runner.presentCall!({ runnerId: 8 })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_delete_registry_repository.presentCall!({ project: 'a/b', repositoryId: 1 })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_delete_registry_tag.presentCall!({ project: 'a/b', repositoryId: 1, tag: 'latest' })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_enable_project_runner.presentCall!({ project: 'a/b', runnerId: 8 })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_disable_project_runner.presentCall!({ project: 'a/b', runnerId: 8 })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_create_project_mirror.presentCall!({ project: 'a/b', url: 'u' })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_start_project_export.presentCall!({ project: 'a/b' })).toMatchObject({ kind: 'edit' })
   })
 })

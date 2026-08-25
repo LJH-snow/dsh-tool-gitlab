@@ -387,6 +387,83 @@ export interface VariableWriteResult {
   reason?: string
 }
 
+export interface RunnerItem {
+  id: number
+  description: string
+  ipAddress: string | null
+  active: boolean
+  shared: boolean
+  online: boolean
+  status: string
+  runnerType: string | null
+  accessLevel: string | null
+}
+
+export interface RunnerWriteResult {
+  ok: boolean
+  id?: number
+  reason?: string
+}
+
+export interface RegistryRepositoryItem {
+  id: number
+  name: string
+  path: string
+  location: string
+  tagsCount: number
+  createdAt: string | null
+}
+
+export interface RegistryTagItem {
+  name: string
+  location: string
+  revision: string | null
+  shortRevision: string | null
+  digest: string | null
+  createdAt: string | null
+  totalSize: number | null
+}
+
+export interface RegistryDeleteResult {
+  deleted: boolean
+  reason?: string
+}
+
+export interface RemoteMirrorItem {
+  id: number
+  enabled: boolean
+  keepDivergentRefs: boolean
+  updateStatus: string
+  lastSuccessfulUpdateAt: string | null
+  lastError: string | null
+  onlyProtectedBranches: boolean
+}
+
+export interface RemoteMirrorListResult {
+  found: boolean
+  items: RemoteMirrorItem[]
+}
+
+export interface RemoteMirrorWriteResult {
+  ok: boolean
+  id?: number
+  enabled?: boolean
+  reason?: string
+}
+
+export interface ProjectExportStartResult {
+  ok: boolean
+  exportStatus?: string
+  reason?: string
+}
+
+export interface ProjectExportStatusResult {
+  found: boolean
+  exportStatus?: string
+  finishedAt?: string | null
+  message?: string | null
+}
+
 export type IssueState = 'opened' | 'closed' | 'all'
 export type MrState = 'opened' | 'closed' | 'merged' | 'all'
 export type AccessLevelInput = string | number
@@ -1640,6 +1717,233 @@ export class GitlabClient {
     } catch (error) {
       if (error instanceof GitlabError && error.status === 404) {
         return { ok: false, reason: 'Variable not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listRunners(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<RunnerItem[]> {
+    const data = await this.request<Array<{
+      id: number
+      description: string | null
+      ip_address: string | null
+      active: boolean
+      is_shared: boolean
+      online: boolean
+      status: string
+      runner_type: string
+      access_level: string | null
+    }>>(`/projects/${encodeURIComponent(project)}/runners?${this.pageParams(options.perPage, 50)}`, { signal: options.signal })
+    return data.map(item => ({
+      id: item.id,
+      description: item.description ?? '',
+      ipAddress: item.ip_address,
+      active: item.active,
+      shared: item.is_shared ?? false,
+      online: item.online ?? false,
+      status: item.status ?? (item.online ? 'online' : 'offline'),
+      runnerType: item.runner_type ?? null,
+      accessLevel: item.access_level ?? null,
+    }))
+  }
+
+  async enableProjectRunner(project: string, runnerId: number, signal?: AbortSignal): Promise<RunnerWriteResult> {
+    try {
+      const data = await this.request<{ id: number }>(
+        `/projects/${encodeURIComponent(project)}/runners`,
+        { method: 'POST', body: { runner_id: runnerId }, signal },
+      )
+      return { ok: true, id: data.id ?? runnerId }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, id: runnerId, reason: 'Could not enable the runner for this project (not found or already enabled).' }
+      }
+      throw error
+    }
+  }
+
+  async disableProjectRunner(project: string, runnerId: number, signal?: AbortSignal): Promise<RunnerWriteResult> {
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/runners/${runnerId}`, { method: 'DELETE', signal })
+      return { ok: true, id: runnerId }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, id: runnerId, reason: 'Runner is not assigned to this project.' }
+      }
+      throw error
+    }
+  }
+
+  async deleteRunner(runnerId: number, signal?: AbortSignal): Promise<RunnerWriteResult> {
+    try {
+      await this.request<unknown>(`/runners/${runnerId}`, { method: 'DELETE', signal })
+      return { ok: true, id: runnerId }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, id: runnerId, reason: 'Runner not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listRegistryRepositories(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<RegistryRepositoryItem[]> {
+    const data = await this.request<Array<{
+      id: number
+      name: string
+      path: string
+      location: string
+      tags_count: number
+      created_at: string | null
+    }>>(`/projects/${encodeURIComponent(project)}/registry/repositories?${this.pageParams(options.perPage, 50)}`, { signal: options.signal })
+    return data.map(item => ({
+      id: item.id,
+      name: item.name,
+      path: item.path,
+      location: item.location,
+      tagsCount: item.tags_count ?? 0,
+      createdAt: item.created_at,
+    }))
+  }
+
+  async listRegistryTags(project: string, repositoryId: number, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<RegistryTagItem[]> {
+    const data = await this.request<Array<{
+      name: string
+      location: string
+      revision: string | null
+      short_revision: string | null
+      digest: string | null
+      created_at: string | null
+      total_size: number | null
+    }>>(`/projects/${encodeURIComponent(project)}/registry/repositories/${repositoryId}/tags?${this.pageParams(options.perPage, 50)}`, { signal: options.signal })
+    return data.map(item => ({
+      name: item.name,
+      location: item.location,
+      revision: item.revision,
+      shortRevision: item.short_revision,
+      digest: item.digest,
+      createdAt: item.created_at,
+      totalSize: item.total_size,
+    }))
+  }
+
+  async deleteRegistryRepository(project: string, repositoryId: number, signal?: AbortSignal): Promise<RegistryDeleteResult> {
+    try {
+      await this.request<unknown>(`/projects/${encodeURIComponent(project)}/registry/repositories/${repositoryId}`, { method: 'DELETE', signal })
+      return { deleted: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { deleted: false, reason: 'Registry repository not found.' }
+      }
+      throw error
+    }
+  }
+
+  async deleteRegistryTag(project: string, repositoryId: number, tag: string, signal?: AbortSignal): Promise<RegistryDeleteResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/registry/repositories/${repositoryId}/tags/${encodeURIComponent(tag)}`,
+        { method: 'DELETE', signal },
+      )
+      return { deleted: true }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { deleted: false, reason: 'Registry repository or tag not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listRemoteMirrors(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<RemoteMirrorListResult> {
+    try {
+      const data = await this.request<Array<{
+        id: number
+        enabled: boolean
+        keep_divergent_refs: boolean
+        update_status: string
+        last_successful_update_at: string | null
+        last_error: string | null
+        only_protected_branches: boolean
+      }>>(`/projects/${encodeURIComponent(project)}/remote_mirrors?${this.pageParams(options.perPage, 50)}`, { signal: options.signal })
+      return {
+        found: true,
+        items: data.map(item => ({
+          id: item.id,
+          enabled: item.enabled,
+          keepDivergentRefs: item.keep_divergent_refs,
+          updateStatus: item.update_status,
+          lastSuccessfulUpdateAt: item.last_successful_update_at,
+          lastError: item.last_error,
+          onlyProtectedBranches: item.only_protected_branches,
+        })),
+      }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { found: false, items: [] }
+      }
+      throw error
+    }
+  }
+
+  async createRemoteMirror(project: string, input: {
+    url: string
+    enabled?: boolean
+    keepDivergentRefs?: boolean
+    onlyProtectedBranches?: boolean
+    signal?: AbortSignal
+  }): Promise<RemoteMirrorWriteResult> {
+    try {
+      const data = await this.request<{ id: number; enabled: boolean }>(
+        `/projects/${encodeURIComponent(project)}/remote_mirrors`,
+        {
+          method: 'POST',
+          body: {
+            url: input.url,
+            enabled: input.enabled ?? true,
+            keep_divergent_refs: input.keepDivergentRefs ?? false,
+            only_protected_branches: input.onlyProtectedBranches ?? false,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, id: data.id, enabled: data.enabled }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the remote mirror (invalid URL, project not found, or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async startProjectExport(project: string, options: { description?: string; signal?: AbortSignal } = {}): Promise<ProjectExportStartResult> {
+    try {
+      const data = await this.request<{ message?: string; export_status?: string }>(
+        `/projects/${encodeURIComponent(project)}/export`,
+        {
+          method: 'POST',
+          body: options.description ? { description: options.description } : undefined,
+          signal: options.signal,
+        },
+      )
+      return { ok: true, exportStatus: data.export_status ?? 'started' }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not start the project export (project not found or export is invalid).' }
+      }
+      throw error
+    }
+  }
+
+  async getProjectExportStatus(project: string, signal?: AbortSignal): Promise<ProjectExportStatusResult> {
+    try {
+      const data = await this.request<{
+        export_status: string
+        finished_at: string | null
+        message: string | null
+      }>(`/projects/${encodeURIComponent(project)}/export/status`, { signal })
+      return { found: true, exportStatus: data.export_status, finishedAt: data.finished_at, message: data.message }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { found: false }
       }
       throw error
     }

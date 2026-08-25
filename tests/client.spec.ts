@@ -694,4 +694,153 @@ describe('GitlabClient', () => {
     const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
     expect((await missing.deleteProjectVariable('a/b', 'TOKEN')).ok).toBe(false)
   })
+
+  it('listRunners and enable/disable/delete runner hit the runner endpoints', async () => {
+    const listImpl = vi.fn(async () => jsonResponse(200, [{
+      id: 8, description: 'linux', ip_address: null, active: true, is_shared: false,
+      online: true, status: 'online', runner_type: 'project_type', access_level: 'ref_protected',
+    }]))
+    const lister = new GitlabClient({ token: 'glpat_test', fetchImpl: listImpl })
+    const runners = await lister.listRunners('a/b', { perPage: 5 })
+    expect(runners).toEqual([{
+      id: 8, description: 'linux', ipAddress: null, active: true, shared: false, online: true,
+      status: 'online', runnerType: 'project_type', accessLevel: 'ref_protected',
+    }])
+    const [listUrl] = listImpl.mock.calls[0] as [string]
+    expect(listUrl).toContain('/projects/a%2Fb/runners?')
+    expect(listUrl).toContain('per_page=5')
+
+    const enableImpl = vi.fn(async () => jsonResponse(201, { id: 8 }))
+    const enabler = new GitlabClient({ token: 'glpat_test', fetchImpl: enableImpl })
+    expect(await enabler.enableProjectRunner('a/b', 8)).toEqual({ ok: true, id: 8 })
+    const [enableUrl, enableInit] = enableImpl.mock.calls[0] as [string, RequestInit]
+    expect(enableUrl).toContain('/projects/a%2Fb/runners')
+    expect(enableInit.method).toBe('POST')
+    expect(JSON.parse(String(enableInit.body))).toEqual({ runner_id: 8 })
+
+    const disableImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const disabler = new GitlabClient({ token: 'glpat_test', fetchImpl: disableImpl })
+    expect(await disabler.disableProjectRunner('a/b', 8)).toEqual({ ok: true, id: 8 })
+    const [disableUrl, disableInit] = disableImpl.mock.calls[0] as [string, RequestInit]
+    expect(disableUrl).toContain('/projects/a%2Fb/runners/8')
+    expect(disableInit.method).toBe('DELETE')
+
+    const deleteImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const deleter = new GitlabClient({ token: 'glpat_test', fetchImpl: deleteImpl })
+    expect(await deleter.deleteRunner(8)).toEqual({ ok: true, id: 8 })
+    const [deleteUrl, deleteInit] = deleteImpl.mock.calls[0] as [string, RequestInit]
+    expect(deleteUrl).toContain('/runners/8')
+    expect(deleteInit.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.disableProjectRunner('a/b', 8)).ok).toBe(false)
+    expect((await missing.deleteRunner(8)).ok).toBe(false)
+  })
+
+  it('listRegistryRepositories and listRegistryTags map container metadata', async () => {
+    const repoImpl = vi.fn(async () => jsonResponse(200, [{
+      id: 1, name: 'app', path: 'a/b/app', location: 'registry.example.com/a/b/app',
+      tags_count: 3, created_at: '2026-01-01T00:00:00Z',
+    }]))
+    const repoClient = new GitlabClient({ token: 'glpat_test', fetchImpl: repoImpl })
+    const repos = await repoClient.listRegistryRepositories('a/b')
+    expect(repos).toEqual([{
+      id: 1, name: 'app', path: 'a/b/app', location: 'registry.example.com/a/b/app', tagsCount: 3, createdAt: '2026-01-01T00:00:00Z',
+    }])
+    const [repoUrl] = repoImpl.mock.calls[0] as [string]
+    expect(repoUrl).toContain('/projects/a%2Fb/registry/repositories?')
+
+    const tagImpl = vi.fn(async () => jsonResponse(200, [{
+      name: 'latest', location: 'registry.example.com/a/b/app:latest', revision: 'abc', short_revision: 'ab12cd',
+      digest: 'sha256:abc', created_at: '2026-01-01T00:00:00Z', total_size: 1024,
+    }]))
+    const tagClient = new GitlabClient({ token: 'glpat_test', fetchImpl: tagImpl })
+    const tags = await tagClient.listRegistryTags('a/b', 1)
+    expect(tags).toEqual([{
+      name: 'latest', location: 'registry.example.com/a/b/app:latest', revision: 'abc', shortRevision: 'ab12cd',
+      digest: 'sha256:abc', createdAt: '2026-01-01T00:00:00Z', totalSize: 1024,
+    }])
+    const [tagUrl] = tagImpl.mock.calls[0] as [string]
+    expect(tagUrl).toContain('/projects/a%2Fb/registry/repositories/1/tags?')
+  })
+
+  it('deleteRegistryRepository and deleteRegistryTag DELETEs and map 404', async () => {
+    const repoImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const repoClient = new GitlabClient({ token: 'glpat_test', fetchImpl: repoImpl })
+    expect(await repoClient.deleteRegistryRepository('a/b', 1)).toEqual({ deleted: true })
+    const [repoUrl, repoInit] = repoImpl.mock.calls[0] as [string, RequestInit]
+    expect(repoUrl).toContain('/projects/a%2Fb/registry/repositories/1')
+    expect(repoInit.method).toBe('DELETE')
+
+    const tagImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const tagClient = new GitlabClient({ token: 'glpat_test', fetchImpl: tagImpl })
+    expect(await tagClient.deleteRegistryTag('a/b', 1, 'latest')).toEqual({ deleted: true })
+    const [tagUrl, tagInit] = tagImpl.mock.calls[0] as [string, RequestInit]
+    expect(tagUrl).toContain('/projects/a%2Fb/registry/repositories/1/tags/latest')
+    expect(tagInit.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.deleteRegistryRepository('a/b', 1)).deleted).toBe(false)
+    expect((await missing.deleteRegistryTag('a/b', 1, 'latest')).deleted).toBe(false)
+  })
+
+  it('listRemoteMirrors exposes safe metadata and masks URLs', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [{
+      id: 5, url: 'https://user:secret@example.com/repo.git', enabled: true, keep_divergent_refs: true,
+      update_status: 'finished', last_successful_update_at: '2026-01-01T00:00:00Z', last_error: null,
+      only_protected_branches: false,
+    }]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.listRemoteMirrors('a/b')
+    expect(result).toEqual({
+      found: true,
+      items: [{
+        id: 5, enabled: true, keepDivergentRefs: true, updateStatus: 'finished',
+        lastSuccessfulUpdateAt: '2026-01-01T00:00:00Z', lastError: null, onlyProtectedBranches: false,
+      }],
+    })
+    expect(JSON.stringify(result)).not.toContain('secret')
+    expect(JSON.stringify(result)).not.toContain('example.com/repo.git')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.listRemoteMirrors('a/b')).toEqual({ found: false, items: [] })
+  })
+
+  it('createRemoteMirror sends the URL once and never returns it', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 5, enabled: false, url: 'https://user:secret@example.com/repo.git' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.createRemoteMirror('a/b', {
+      url: 'https://user:secret@example.com/repo.git', enabled: true, keepDivergentRefs: true, onlyProtectedBranches: true,
+    })
+    expect(result).toEqual({ ok: true, id: 5, enabled: false })
+    expect(JSON.stringify(result)).not.toContain('secret')
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      url: 'https://user:secret@example.com/repo.git', enabled: true, keep_divergent_refs: true, only_protected_branches: true,
+    })
+  })
+
+  it('startProjectExport and getProjectExportStatus map async export state', async () => {
+    const startImpl = vi.fn(async () => jsonResponse(202, { message: '202 Accepted' }))
+    const starter = new GitlabClient({ token: 'glpat_test', fetchImpl: startImpl })
+    const started = await starter.startProjectExport('a/b', { description: 'backup' })
+    expect(started).toEqual({ ok: true, exportStatus: 'started' })
+    const [startUrl, startInit] = startImpl.mock.calls[0] as [string, RequestInit]
+    expect(startUrl).toContain('/projects/a%2Fb/export')
+    expect(startInit.method).toBe('POST')
+    expect(JSON.parse(String(startInit.body))).toEqual({ description: 'backup' })
+
+    const statusImpl = vi.fn(async () => jsonResponse(200, {
+      export_status: 'finished', finished_at: '2026-01-01T00:00:00Z', message: null,
+    }))
+    const statusClient = new GitlabClient({ token: 'glpat_test', fetchImpl: statusImpl })
+    expect(await statusClient.getProjectExportStatus('a/b')).toEqual({
+      found: true, exportStatus: 'finished', finishedAt: '2026-01-01T00:00:00Z', message: null,
+    })
+    const [statusUrl] = statusImpl.mock.calls[0] as [string]
+    expect(statusUrl).toContain('/projects/a%2Fb/export/status')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.getProjectExportStatus('a/b')).toEqual({ found: false })
+  })
 })

@@ -57,6 +57,7 @@ npm install /path/to/dsh-tool-gitlab
 | 自动化与 CI 配置 | `gitlab_list/create/delete_project_webhook`、`gitlab_list/create/update/delete_project_variable`(值永不暴露) | — |
 | 个人工作台 | `gitlab_list_todos`(指派/待批准/被提及)、`gitlab_get_current_user` | — |
 | 发布与 DevOps | `gitlab_list_releases`、`gitlab_list_milestones`、`gitlab_list_environments`、`gitlab_list_labels` | 仅 releases 列表 |
+| Runner、容器与备份 | Runner 增删/分配、registry 仓库与 tag、远程镜像(URL 打码)、项目导出状态 | — |
 | 自托管 | `baseUrl` 覆盖指向内网 GitLab | GitHub Enterprise baseUrl |
 | 评审 UX | MR 变更为 `search` 卡片、写文件为 `diff` 卡片、Job 日志为 `terminal` 卡片 | generic/search 卡片 |
 
@@ -94,6 +95,11 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_list_todos` | 待办(指派/待批准/被提及) | 是 |
 | `gitlab_list_project_webhooks` | Webhook URL 与启用事件类型(仅元数据) | 私有项目 |
 | `gitlab_list_project_variables` | CI/CD 变量 key 与选项——值永不返回 | 私有项目 |
+| `gitlab_list_runners` | 项目已分配的 Runner(状态/类型/访问级别) | 私有项目 |
+| `gitlab_list_registry_repositories` | 容器仓库列表(含 tag 数) | 私有项目 |
+| `gitlab_list_registry_tags` | 容器仓库 tag 列表(含 digest/大小) | 私有项目 |
+| `gitlab_list_project_mirrors` | 远程镜像设置;URL 与凭据永不返回 | 是 |
+| `gitlab_get_project_export_status` | 查询异步项目导出状态 | 是 |
 
 ### 写操作
 
@@ -129,6 +135,13 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_create_project_variable` | 创建 CI/CD 变量(值只发送一次,不回显) | 是 |
 | `gitlab_update_project_variable` | 更新 CI/CD 变量(值不回显) | 是 |
 | `gitlab_delete_project_variable` | 删除 CI/CD 变量(删除类 UI 卡片) | 是 |
+| `gitlab_enable_project_runner` | 为项目启用已有 Runner | 是 |
+| `gitlab_disable_project_runner` | 将 Runner 从项目解除分配 | 是 |
+| `gitlab_delete_runner` | 永久删除 Runner(删除类 UI 卡片) | 是 |
+| `gitlab_delete_registry_repository` | 删除容器仓库及其全部 tag(删除类 UI 卡片) | 是 |
+| `gitlab_delete_registry_tag` | 删除指定容器镜像 tag(删除类 UI 卡片) | 是 |
+| `gitlab_create_project_mirror` | 创建远程镜像;URL 只发送一次、永不回显 | 是 |
+| `gitlab_start_project_export` | 启动异步项目导出 | 是 |
 
 ### 行为约定(遵循官方 execute 契约)
 

@@ -2925,5 +2925,586 @@ export function createTools(client: GitlabClient) {
         return client.deleteProjectVariable(args.project, args.key, exec.signal)
       },
     }),
+
+    defineTool({
+      name: 'gitlab_list_runners',
+      description: 'List runners assigned to a project with status, type, and access level. Requires a token for private projects.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Max runners to return (1-50, default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer' },
+                  description: { type: 'string' },
+                  ipAddress: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  active: { type: 'boolean' },
+                  shared: { type: 'boolean' },
+                  online: { type: 'boolean' },
+                  status: { type: 'string' },
+                  runnerType: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  accessLevel: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing runners requires a GitLab token for private projects.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No runners are assigned to this project.' }]
+          return [{ type: 'text', text: items.map((r: { id?: number; description?: string; status?: string; active?: boolean; shared?: boolean; runnerType?: string | null }) =>
+            `#${r.id ?? ''} ${r.description ?? ''} (${r.status ?? 'unknown'}, active:${r.active ?? false}, shared:${r.shared ?? false}, ${r.runnerType ?? 'runner'})`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Runners of ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: Array<{ id: number; description: string }> }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} runner(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        try {
+          const limit = Math.max(1, Math.min(args.limit ?? 20, 50))
+          return { found: true, authenticated: true, items: await client.listRunners(args.project, { perPage: limit, signal: exec.signal }) }
+        } catch (error) {
+          if (error instanceof GitlabError && error.status === 404) {
+            return { found: false, authenticated: true, items: [] }
+          }
+          throw error
+        }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_enable_project_runner',
+      description: 'Enable an existing runner for a project. WRITE operation: requires a token; the runner stays owned by its original scope.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        runnerId: { type: 'integer', required: true, description: 'Runner id (see gitlab_list_runners)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the runner was enabled for the project' },
+            id: { type: 'integer', description: 'Runner id' },
+            reason: { type: 'string', description: 'Explanation when not enabled' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Runner #${value.id} enabled for ${_args.project}.` }]
+          return [{ type: 'text', text: `Could not enable the runner: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Enable runner #${args.runnerId} for ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Runner #${v.id} enabled` }
+        return { card: 'generic', title: 'Enable runner failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, id: args.runnerId, reason: 'Enabling a runner requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.enableProjectRunner(args.project, args.runnerId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_disable_project_runner',
+      description: 'Unassign a runner from a project. WRITE operation: requires a token; the runner is not deleted.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        runnerId: { type: 'integer', required: true, description: 'Runner id (see gitlab_list_runners)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the runner was unassigned' },
+            id: { type: 'integer', description: 'Runner id' },
+            reason: { type: 'string', description: 'Explanation when not unassigned' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Runner #${value.id} unassigned from ${_args.project}.` }]
+          return [{ type: 'text', text: `Could not disable the runner: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Disable runner #${args.runnerId} from ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Runner #${v.id} disabled` }
+        return { card: 'generic', title: 'Disable runner failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, id: args.runnerId, reason: 'Disabling a runner requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.disableProjectRunner(args.project, args.runnerId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_runner',
+      description: 'Permanently delete a runner. DESTRUCTIVE operation: requires a token and removes the runner from every assigned project.',
+      parameters: {
+        runnerId: { type: 'integer', required: true, description: 'Runner id (see gitlab_list_runners)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the runner was deleted' },
+            id: { type: 'integer', description: 'Runner id' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Runner #${value.id} deleted.` }]
+          return [{ type: 'text', text: `Could not delete the runner: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete runner #${args.runnerId}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Runner #${v.id} deleted` }
+        return { card: 'generic', title: 'Delete runner failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, id: args.runnerId, reason: 'Deleting a runner requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteRunner(args.runnerId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_registry_repositories',
+      description: 'List container registry repositories in a project with tag counts. Requires a token for private projects.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Max repositories to return (1-50, default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer' },
+                  name: { type: 'string' },
+                  path: { type: 'string' },
+                  location: { type: 'string' },
+                  tagsCount: { type: 'integer' },
+                  createdAt: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing registry repositories requires a GitLab token for private projects.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No container registry repositories found.' }]
+          return [{ type: 'text', text: items.map((r: { path?: string; tagsCount?: number; location?: string }) =>
+            `${r.path ?? ''} (${r.tagsCount ?? 0} tags, ${r.location ?? ''})`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Registry repositories: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: unknown[] }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} repository(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        try {
+          const limit = Math.max(1, Math.min(args.limit ?? 20, 50))
+          return { found: true, authenticated: true, items: await client.listRegistryRepositories(args.project, { perPage: limit, signal: exec.signal }) }
+        } catch (error) {
+          if (error instanceof GitlabError && error.status === 404) {
+            return { found: false, authenticated: true, items: [] }
+          }
+          throw error
+        }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_registry_tags',
+      description: 'List tags for a container registry repository. Requires a token for private projects.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        repositoryId: { type: 'integer', required: true, description: 'Registry repository id (see gitlab_list_registry_repositories)' },
+        limit: { type: 'integer', description: 'Max tags to return (1-50, default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project or repository exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: { type: 'string' },
+                  location: { type: 'string' },
+                  revision: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  shortRevision: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  digest: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  createdAt: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  totalSize: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project or registry repository not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing registry tags requires a GitLab token for private projects.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No tags in this registry repository.' }]
+          return [{ type: 'text', text: items.map((t: { name?: string; shortRevision?: string | null; digest?: string | null; createdAt?: string | null }) =>
+            `${t.name ?? ''} (${t.shortRevision ?? ''}, ${t.digest ?? ''}, ${t.createdAt ?? ''})`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Registry tags: repository #${args.repositoryId}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: unknown[] }
+        if (!v.found) return { card: 'generic', title: 'Repository not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} tag(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        try {
+          const limit = Math.max(1, Math.min(args.limit ?? 20, 50))
+          return { found: true, authenticated: true, items: await client.listRegistryTags(args.project, args.repositoryId, { perPage: limit, signal: exec.signal }) }
+        } catch (error) {
+          if (error instanceof GitlabError && error.status === 404) {
+            return { found: false, authenticated: true, items: [] }
+          }
+          throw error
+        }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_registry_repository',
+      description: 'Delete a container registry repository and all of its tags. DESTRUCTIVE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        repositoryId: { type: 'integer', required: true, description: 'Registry repository id (see gitlab_list_registry_repositories)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            deleted: { type: 'boolean', description: 'Whether the repository was deleted' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.deleted) return [{ type: 'text', text: `Registry repository #${_args.repositoryId} deleted.` }]
+          return [{ type: 'text', text: `Could not delete the registry repository: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete registry repository #${args.repositoryId}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { deleted?: boolean; reason?: string }
+        if (v.deleted) return { card: 'generic', title: `Repository #${_args.repositoryId} deleted` }
+        return { card: 'generic', title: 'Delete repository failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { deleted: false, reason: 'Deleting a registry repository requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteRegistryRepository(args.project, args.repositoryId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_registry_tag',
+      description: 'Delete a specific container registry tag. DESTRUCTIVE operation: requires a token; the image manifest may become unreachable.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        repositoryId: { type: 'integer', required: true, description: 'Registry repository id (see gitlab_list_registry_repositories)' },
+        tag: { type: 'string', required: true, description: 'Tag name, e.g. latest' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            deleted: { type: 'boolean', description: 'Whether the tag was deleted' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.deleted) return [{ type: 'text', text: `Tag "${_args.tag}" deleted.` }]
+          return [{ type: 'text', text: `Could not delete the registry tag: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete registry tag ${args.tag}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { deleted?: boolean; reason?: string }
+        if (v.deleted) return { card: 'generic', title: `Tag ${_args.tag} deleted` }
+        return { card: 'generic', title: 'Delete tag failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { deleted: false, reason: 'Deleting a registry tag requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteRegistryTag(args.project, args.repositoryId, args.tag, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_project_mirrors',
+      description: 'List remote mirror settings for a project. Mirror URLs and credentials are never returned; only enabled state, sync status, and recent errors are exposed.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Max mirrors to return (1-50, default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer' },
+                  enabled: { type: 'boolean' },
+                  keepDivergentRefs: { type: 'boolean' },
+                  updateStatus: { type: 'string' },
+                  lastSuccessfulUpdateAt: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  lastError: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  onlyProtectedBranches: { type: 'boolean' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing remote mirrors requires a GitLab token.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No remote mirrors configured for this project.' }]
+          return [{ type: 'text', text: items.map((m: { id?: number; enabled?: boolean; updateStatus?: string; lastError?: string | null }) =>
+            `#${m.id ?? ''} enabled:${m.enabled ?? false}, status:${m.updateStatus ?? 'unknown'}${m.lastError ? `, error:${m.lastError}` : ''}`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Remote mirrors: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: unknown[] }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} mirror(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        const limit = Math.max(1, Math.min(args.limit ?? 20, 50))
+        return client.listRemoteMirrors(args.project, { perPage: limit, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_create_project_mirror',
+      description: 'Create a remote mirror for a project. WRITE operation: requires a token. Mirror URLs may contain credentials, so the URL is sent to GitLab and never echoed back.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        url: { type: 'string', required: true, description: 'Remote mirror URL (sent once, never returned by the plugin)' },
+        enabled: { type: 'boolean', description: 'Enable the mirror immediately (default true)' },
+        keepDivergentRefs: { type: 'boolean', description: 'Keep divergent refs (default false)' },
+        onlyProtectedBranches: { type: 'boolean', description: 'Only mirror protected branches (default false)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the mirror was created' },
+            id: { type: 'integer', description: 'Mirror id' },
+            enabled: { type: 'boolean', description: 'Whether the mirror is enabled' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created remote mirror #${value.id} (enabled=${value.enabled}).` }]
+          return [{ type: 'text', text: `Could not create the remote mirror: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create remote mirror for ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Mirror #${v.id} created` }
+        return { card: 'generic', title: 'Create mirror failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating a remote mirror requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createRemoteMirror(args.project, {
+          url: args.url,
+          enabled: args.enabled,
+          keepDivergentRefs: args.keepDivergentRefs,
+          onlyProtectedBranches: args.onlyProtectedBranches,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_start_project_export',
+      description: 'Start an asynchronous GitLab project export. WRITE operation: requires a token; use gitlab_get_project_export_status to track completion.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        description: { type: 'string', description: 'Optional export description' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the export request was accepted' },
+            exportStatus: { type: 'string', description: 'Reported export status' },
+            reason: { type: 'string', description: 'Explanation when not started' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Project export started (${value.exportStatus ?? 'started'}).` }]
+          return [{ type: 'text', text: `Could not start the project export: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Start export: ${args.project}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; exportStatus?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: 'Export started', content: [{ type: 'text', text: v.exportStatus ?? 'started' }] }
+        return { card: 'generic', title: 'Export failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Starting a project export requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.startProjectExport(args.project, { description: args.description, signal: exec.signal })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_get_project_export_status',
+      description: 'Check the status of an asynchronous project export (for example started, finished, failed, regenerating). Requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            exportStatus: { type: 'string', description: 'Current export status' },
+            finishedAt: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Export finish time' },
+            message: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Export message or error' },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project or export record not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Checking export status requires a GitLab token.' }]
+          const lines = [`status: ${value.exportStatus ?? 'unknown'}`]
+          if (value.finishedAt) lines.push(`finished: ${value.finishedAt}`)
+          if (value.message) lines.push(`message: ${value.message}`)
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Export status: ${args.project}`, kind: 'read' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; exportStatus?: string }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `Export: ${v.exportStatus ?? 'unknown'}` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false }
+        }
+        return client.getProjectExportStatus(args.project, exec.signal)
+      },
+    }),
   ]
 }
