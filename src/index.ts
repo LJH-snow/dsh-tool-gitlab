@@ -3506,5 +3506,572 @@ export function createTools(client: GitlabClient) {
         return client.getProjectExportStatus(args.project, exec.signal)
       },
     }),
+
+    defineTool({
+      name: 'gitlab_list_mr_approval_rules',
+      description: 'List merge request approval rules with eligible approvers and required approval counts. Enterprise MR governance.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'Merge request IID' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the merge request exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer', description: 'Approval rule id' },
+                  name: { type: 'string', description: 'Rule name' },
+                  ruleType: { type: 'string', description: 'Rule type' },
+                  approvalsRequired: { type: 'integer', description: 'Required approvals' },
+                  eligibleApprovers: { type: 'array', items: { type: 'string' }, description: 'Eligible approver usernames' },
+                  appliesToAllProtectedBranches: { type: 'boolean', description: 'Whether the rule applies to all protected branches' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Merge request not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing approval rules requires a GitLab token.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No approval rules configured.' }]
+          return [{ type: 'text', text: items.map((item: { name?: string; approvalsRequired?: number; eligibleApprovers?: string[] }) =>
+            `${item.name ?? 'Rule'}: ${item.approvalsRequired ?? 0} required${item.eligibleApprovers && item.eligibleApprovers.length > 0 ? `, ${item.eligibleApprovers.join(', ')}` : ', any eligible approver'}`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Approval rules: ${args.project} !${args.iid}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: unknown[] }
+        if (!v.found) return { card: 'generic', title: 'Merge request not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} approval rule(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        return client.listMrApprovalRules(args.project, args.iid, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_create_mr_approval_rule',
+      description: 'Create a merge request approval rule with user/group approvers and a required count. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'Merge request IID' },
+        name: { type: 'string', required: true, description: 'Rule name, e.g. "Security review"' },
+        approvalsRequired: { type: 'integer', description: 'Required approvals (default 1)' },
+        userIds: { type: 'array', items: { type: 'integer' }, description: 'GitLab user ids that must approve' },
+        groupIds: { type: 'array', items: { type: 'integer' }, description: 'GitLab group ids that must approve' },
+        appliesToAllProtectedBranches: { type: 'boolean', description: 'Apply the rule to all protected branches (default false)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the rule was created' },
+            id: { type: 'integer', description: 'Approval rule id' },
+            name: { type: 'string', description: 'Rule name' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created approval rule "${value.name}" (id ${value.id}).` }]
+          return [{ type: 'text', text: `Could not create the approval rule: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create approval rule ${args.name}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; name?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Rule "${v.name}" created` }
+        return { card: 'generic', title: 'Create rule failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating an approval rule requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createMrApprovalRule(args.project, args.iid, {
+          name: args.name,
+          approvalsRequired: args.approvalsRequired,
+          userIds: args.userIds,
+          groupIds: args.groupIds,
+          appliesToAllProtectedBranches: args.appliesToAllProtectedBranches,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_update_mr_approval_rule',
+      description: 'Update an existing merge request approval rule. WRITE operation: requires a token. Provide at least one field to change.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'Merge request IID' },
+        ruleId: { type: 'integer', required: true, description: 'Approval rule id' },
+        name: { type: 'string', description: 'New rule name' },
+        approvalsRequired: { type: 'integer', description: 'New required approval count' },
+        userIds: { type: 'array', items: { type: 'integer' }, description: 'Replacement user approver ids' },
+        groupIds: { type: 'array', items: { type: 'integer' }, description: 'Replacement group approver ids' },
+        appliesToAllProtectedBranches: { type: 'boolean', description: 'Apply the rule to all protected branches' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the rule was updated' },
+            id: { type: 'integer', description: 'Approval rule id' },
+            name: { type: 'string', description: 'Rule name' },
+            reason: { type: 'string', description: 'Explanation when not updated' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Updated approval rule "${value.name}" (id ${value.id}).` }]
+          return [{ type: 'text', text: `Could not update the approval rule: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Update approval rule #${args.ruleId}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; name?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Rule "${v.name}" updated` }
+        return { card: 'generic', title: 'Update rule failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Updating an approval rule requires a GitLab token. Configure the plugin with a token.' }
+        }
+        if (args.name === undefined && args.approvalsRequired === undefined && args.userIds === undefined && args.groupIds === undefined && args.appliesToAllProtectedBranches === undefined) {
+          return { ok: false, reason: 'Provide at least one field to update (name, approvalsRequired, userIds, groupIds, or appliesToAllProtectedBranches).' }
+        }
+        return client.updateMrApprovalRule(args.project, args.iid, args.ruleId, {
+          name: args.name,
+          approvalsRequired: args.approvalsRequired,
+          userIds: args.userIds,
+          groupIds: args.groupIds,
+          appliesToAllProtectedBranches: args.appliesToAllProtectedBranches,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_mr_approval_rule',
+      description: 'Delete a merge request approval rule. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        iid: { type: 'integer', required: true, description: 'Merge request IID' },
+        ruleId: { type: 'integer', required: true, description: 'Approval rule id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the rule was deleted' },
+            id: { type: 'integer', description: 'Deleted approval rule id' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Deleted approval rule #${value.id}.` }]
+          return [{ type: 'text', text: `Could not delete the approval rule: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete approval rule #${args.ruleId}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Approval rule #${v.id} deleted` }
+        return { card: 'generic', title: 'Delete rule failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Deleting an approval rule requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deleteMrApprovalRule(args.project, args.iid, args.ruleId, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_protected_branches',
+      description: 'List protected branches with push, merge, and unprotect access levels. Enterprise branch governance.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        limit: { type: 'integer', description: 'Maximum results, 1-100 (default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer', description: 'Protected branch id' },
+                  name: { type: 'string', description: 'Branch name' },
+                  pushAccess: { type: 'string', description: 'Push access description' },
+                  mergeAccess: { type: 'string', description: 'Merge access description' },
+                  unprotectAccess: { type: 'string', description: 'Unprotect access description' },
+                  allowForcePush: { type: 'boolean' },
+                  codeOwnerApprovalRequired: { type: 'boolean' },
+                  inherited: { type: 'boolean' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing protected branches requires a GitLab token.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No protected branches.' }]
+          return [{ type: 'text', text: items.map((item: { name?: string; pushAccess?: string; mergeAccess?: string; allowForcePush?: boolean }) =>
+            `${item.name}: push=${item.pushAccess ?? 'none'}, merge=${item.mergeAccess ?? 'none'}${item.allowForcePush ? ', force push allowed' : ''}`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Protected branches: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: unknown[] }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} protected branch(es)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        const limit = Math.max(1, Math.min(args.limit ?? 20, 100))
+        const items = await client.listProtectedBranches(args.project, { perPage: limit, signal: exec.signal })
+        return { found: true, authenticated: true, items }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_protect_branch',
+      description: 'Protect a branch with push, merge, and unprotect access levels. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        name: { type: 'string', required: true, description: 'Branch name or wildcard, e.g. main or release/*' },
+        pushAccess: { type: 'string', enum: ['no_access', 'developer', 'maintainer'], description: 'Allowed push level (default maintainer)' },
+        mergeAccess: { type: 'string', enum: ['no_access', 'developer', 'maintainer'], description: 'Allowed merge level (default maintainer)' },
+        unprotectAccess: { type: 'string', enum: ['no_access', 'developer', 'maintainer'], description: 'Allowed unprotect level (default maintainer)' },
+        allowForcePush: { type: 'boolean', description: 'Allow force push (default false)' },
+        codeOwnerApprovalRequired: { type: 'boolean', description: 'Require code owner approval (default false)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the branch was protected' },
+            name: { type: 'string', description: 'Protected branch name' },
+            reason: { type: 'string', description: 'Explanation when not protected' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Protected branch "${value.name}".` }]
+          return [{ type: 'text', text: `Could not protect branch "${_args.name}": ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Protect branch ${args.name}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; name?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Branch "${v.name}" protected` }
+        return { card: 'generic', title: 'Protect branch failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, name: args.name, reason: 'Protecting a branch requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.protectBranch(args.project, {
+          name: args.name,
+          pushAccess: args.pushAccess,
+          mergeAccess: args.mergeAccess,
+          unprotectAccess: args.unprotectAccess,
+          allowForcePush: args.allowForcePush,
+          codeOwnerApprovalRequired: args.codeOwnerApprovalRequired,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_unprotect_branch',
+      description: 'Remove protection from a branch. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        branch: { type: 'string', required: true, description: 'Branch name to unprotect' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the branch was unprotected' },
+            name: { type: 'string', description: 'Branch name' },
+            reason: { type: 'string', description: 'Explanation when not unprotected' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Removed protection from "${value.name}".` }]
+          return [{ type: 'text', text: `Could not unprotect branch "${_args.branch}": ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Unprotect branch ${args.branch}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; name?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Branch "${v.name}" unprotected` }
+        return { card: 'generic', title: 'Unprotect branch failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, name: args.branch, reason: 'Unprotecting a branch requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.unprotectBranch(args.project, args.branch, exec.signal)
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_list_pipeline_schedules',
+      description: 'List scheduled CI/CD pipeline definitions with cron expressions, active state, and last run. Enterprise CI automation.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        active: { type: 'boolean', description: 'Only return active or inactive schedules' },
+        limit: { type: 'integer', description: 'Maximum results, 1-50 (default 20)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', description: 'Whether the project exists' },
+            authenticated: { type: 'boolean', description: 'Whether a token was configured' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  id: { type: 'integer', description: 'Schedule id' },
+                  description: { type: 'string' },
+                  ref: { type: 'string' },
+                  cron: { type: 'string' },
+                  cronTimezone: { type: 'string' },
+                  nextRunAt: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  active: { type: 'boolean' },
+                  owner: { type: 'string' },
+                  createdAt: { type: 'string' },
+                  updatedAt: { type: 'string' },
+                  lastPipeline: {
+                    oneOf: [
+                      { type: 'null' },
+                      { type: 'object', properties: { id: { type: 'integer' }, status: { type: 'string' } }, additionalProperties: false },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.found) return [{ type: 'text', text: 'Project not found.' }]
+          if (value.authenticated === false) return [{ type: 'text', text: 'Listing pipeline schedules requires a GitLab token.' }]
+          const items = value.items ?? []
+          if (items.length === 0) return [{ type: 'text', text: 'No pipeline schedules configured.' }]
+          return [{ type: 'text', text: items.map((item: { id?: number; description?: string; cron?: string; ref?: string; active?: boolean; lastPipeline?: { status?: string } | null }) =>
+            `#${item.id} ${item.description ?? ''} [${item.active ? 'active' : 'paused'}] ${item.cron ?? ''} (${item.ref ?? ''})${item.lastPipeline ? `, last ${item.lastPipeline.status}` : ''}`,
+          ).join('\n') }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Pipeline schedules: ${args.project}`, kind: 'search' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { found?: boolean; authenticated?: boolean; items?: unknown[] }
+        if (!v.found) return { card: 'generic', title: 'Project not found' }
+        if (v.authenticated === false) return { card: 'generic', title: 'Requires a GitLab token' }
+        return { card: 'generic', title: `${v.items?.length ?? 0} schedule(s)` }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { found: true, authenticated: false, items: [] }
+        }
+        const limit = Math.max(1, Math.min(args.limit ?? 20, 50))
+        const items = await client.listPipelineSchedules(args.project, { active: args.active, perPage: limit, signal: exec.signal })
+        return { found: true, authenticated: true, items }
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_create_pipeline_schedule',
+      description: 'Create a scheduled CI/CD pipeline with a cron expression and target ref. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        description: { type: 'string', required: true, description: 'Human-readable schedule description' },
+        ref: { type: 'string', required: true, description: 'Branch or tag ref to run, e.g. main' },
+        cron: { type: 'string', required: true, description: '5-field cron expression, e.g. "0 9 * * 1"' },
+        cronTimezone: { type: 'string', description: 'IANA timezone for the cron expression (default UTC)' },
+        active: { type: 'boolean', description: 'Create the schedule active (default true)' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the schedule was created' },
+            id: { type: 'integer', description: 'Schedule id' },
+            description: { type: 'string', description: 'Schedule description' },
+            reason: { type: 'string', description: 'Explanation when not created' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Created schedule #${value.id}: ${value.description}` }]
+          return [{ type: 'text', text: `Could not create the pipeline schedule: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Create schedule: ${args.description}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; description?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Schedule #${v.id} created` }
+        return { card: 'generic', title: 'Create schedule failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Creating a pipeline schedule requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.createPipelineSchedule(args.project, {
+          description: args.description,
+          ref: args.ref,
+          cron: args.cron,
+          cronTimezone: args.cronTimezone,
+          active: args.active,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_update_pipeline_schedule',
+      description: 'Update a scheduled CI/CD pipeline. WRITE operation: requires a token. Provide at least one field to change.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        scheduleId: { type: 'integer', required: true, description: 'Pipeline schedule id' },
+        description: { type: 'string', description: 'New schedule description' },
+        ref: { type: 'string', description: 'New branch or tag ref' },
+        cron: { type: 'string', description: 'New 5-field cron expression' },
+        cronTimezone: { type: 'string', description: 'New IANA timezone' },
+        active: { type: 'boolean', description: 'Enable or pause the schedule' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the schedule was updated' },
+            id: { type: 'integer', description: 'Schedule id' },
+            description: { type: 'string', description: 'Schedule description' },
+            reason: { type: 'string', description: 'Explanation when not updated' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Updated schedule #${value.id}: ${value.description}` }]
+          return [{ type: 'text', text: `Could not update the pipeline schedule: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Update schedule #${args.scheduleId}`, kind: 'edit' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; description?: string; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Schedule #${v.id} updated` }
+        return { card: 'generic', title: 'Update schedule failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Updating a pipeline schedule requires a GitLab token. Configure the plugin with a token.' }
+        }
+        if (args.description === undefined && args.ref === undefined && args.cron === undefined && args.cronTimezone === undefined && args.active === undefined) {
+          return { ok: false, reason: 'Provide at least one field to update (description, ref, cron, cronTimezone, or active).' }
+        }
+        return client.updatePipelineSchedule(args.project, args.scheduleId, {
+          description: args.description,
+          ref: args.ref,
+          cron: args.cron,
+          cronTimezone: args.cronTimezone,
+          active: args.active,
+          signal: exec.signal,
+        })
+      },
+    }),
+
+    defineTool({
+      name: 'gitlab_delete_pipeline_schedule',
+      description: 'Delete a scheduled CI/CD pipeline. WRITE operation: requires a token.',
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project path "group/project" or numeric project id' },
+        scheduleId: { type: 'integer', required: true, description: 'Pipeline schedule id' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', description: 'Whether the schedule was deleted' },
+            id: { type: 'integer', description: 'Deleted schedule id' },
+            reason: { type: 'string', description: 'Explanation when not deleted' },
+          },
+        },
+        render: (_args, value) => {
+          if (value.ok) return [{ type: 'text', text: `Deleted pipeline schedule #${value.id}.` }]
+          return [{ type: 'text', text: `Could not delete the pipeline schedule: ${value.reason}` }]
+        },
+      },
+      presentCall(args): ToolCallView {
+        return { card: 'generic', title: `Delete schedule #${args.scheduleId}`, kind: 'delete' }
+      },
+      presentResult(_args, result): ToolResultView | undefined {
+        const v = result as unknown as { ok?: boolean; id?: number; reason?: string }
+        if (v.ok) return { card: 'generic', title: `Schedule #${v.id} deleted` }
+        return { card: 'generic', title: 'Delete schedule failed', content: [{ type: 'text', text: v.reason ?? 'Unknown' }] }
+      },
+      async execute(args, exec) {
+        if (!client.hasToken()) {
+          return { ok: false, reason: 'Deleting a pipeline schedule requires a GitLab token. Configure the plugin with a token.' }
+        }
+        return client.deletePipelineSchedule(args.project, args.scheduleId, exec.signal)
+      },
+    }),
   ]
 }

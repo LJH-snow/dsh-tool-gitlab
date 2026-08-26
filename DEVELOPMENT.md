@@ -9,6 +9,7 @@
 | 项目名 | `dsh-tool-gitlab` |
 | 定位 | DeepSeek Harness(dsh)的**独立 GitLab 工具插件**(Cordis 插件),面向企业用户 |
 | 发布名 | `@libai168/dsh-tool-gitlab` |
+| 状态 | v0.6 完成:81 工具 + 110 测试全绿 |
 | 架构 | 一切皆插件:通过 `ctx.tools.register(defineTool(...))` 注册模型可见工具 |
 | 官方参考 | `docs/cookbook/adding-a-tool.md`、`packages/shell/tool-bash`、`docs/cordis-tutorial/` |
 | 项目位置 | 本目录(与官方仓库 `deepseek-harness/` 平级,**不污染官方仓库**) |
@@ -62,6 +63,15 @@
 **项目镜像/导出(4)**:`gitlab_list_project_mirrors`、`gitlab_create_project_mirror`、`gitlab_start_project_export`、`gitlab_get_project_export_status`
 
 安全红线:远程镜像 URL 可能包含凭据,列表/创建/渲染一律不回显 URL。
+
+### 1.7 范围(v0.6)
+共 **11 个新增工具**(总 81 个),补齐 MR 审批规则治理、保护分支与定时流水线:
+
+**MR 审批规则(4)**:`gitlab_list_mr_approval_rules`、`gitlab_create_mr_approval_rule`、`gitlab_update_mr_approval_rule`、`gitlab_delete_mr_approval_rule`
+
+**保护分支(3)**:`gitlab_list_protected_branches`、`gitlab_protect_branch`、`gitlab_unprotect_branch`
+
+**定时流水线(4)**:`gitlab_list_pipeline_schedules`、`gitlab_create_pipeline_schedule`、`gitlab_update_pipeline_schedule`、`gitlab_delete_pipeline_schedule`
 
 ## 2. 技术要点
 
@@ -162,6 +172,15 @@
 - [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
 - 验收:typecheck ✅ / 98/98 ✅ / build ✅ / 产物导出 70 工具 ✅
 
+### 阶段 9:v0.6 扩展(已完成)
+- [x] 客户端新增 11 方法:`listMrApprovalRules`、`createMrApprovalRule`、`updateMrApprovalRule`、`deleteMrApprovalRule`、`listProtectedBranches`、`protectBranch`、`unprotectBranch`、`listPipelineSchedules`、`createPipelineSchedule`、`updatePipelineSchedule`、`deletePipelineSchedule`
+- [x] `protectedBranchAccessValue()` 助手:no_access/developer/maintainer ↔ 0/30/40
+- [x] `src/index.ts` 注册 11 个新工具(总 81 个):MR 审批规则、保护分支、定时流水线
+- [x] 安全/治理约定:审批规则、保护分支、定时流水线均需要 token;删除类工具用 `kind: 'delete'`,创建/更新/保护用 `kind: 'edit'`
+- [x] `tests/` 补齐用例(client 67 + tools 43 = 110 全绿)
+- [x] README.md / README.zh.md 同步工具表与差异化对比(中英一致)
+- 验收:typecheck ✅ / 110/110 ✅ / build ✅ / 产物导出 81 工具 ✅
+
 ## 4. 验证记录
 
 ### 2026-08-14
@@ -203,6 +222,12 @@
 - 测试 98/98(client 61 + tools 37)✅;typecheck ✅;build ✅;README 中英同步 ✅
 - 踩坑:输出 schema 的可空字段在 render 内联 map 回调中需要显式 `| null`,否则 strict 模式类型推断报错
 
+### 2026-08-26(v0.6 实现)
+- 客户端 11 方法 + 接口(ApprovalRule/ProtectedBranch/PipelineSchedule 系);错误映射:写操作 400/404/409/422、删除 404 → 业务值
+- 注册 11 工具(总 81);审批规则/保护分支/定时流水线列表无 token 返回 `{ found: true, authenticated: false, items: [] }`
+- 测试 110/110(client 67 + tools 43)✅;typecheck ✅;README 中英同步 ✅
+- 踩坑:分支名含 `/` 时 `encodeURIComponent` 会编码为 `%2F`,GitLab protected_branches 路径可直接使用
+
 ## 5. 风险与决策记录
 
 | 时间 | 决策/风险 | 说明 |
@@ -220,3 +245,5 @@
 | 2026-08-15 | Webhook URL 会触发外部请求 | 创建 webhook 是向第三方 URL 推送事件的外发操作,工具描述明确标注;删除为破坏性操作 |
 | 2026-08-25 | 远程镜像 URL 可能含凭据 | 与 CI 变量同等对待:只发送 GitLab,列表/创建/渲染永不回显 URL |
 | 2026-08-25 | 删除 Runner/Registry 为破坏性操作 | 调用前 UI 用 `kind: 'delete'` 标注;删除 Runner 会影响所有已分配项目,描述中明确说明 |
+| 2026-08-26 | v0.6 纳入审批规则、保护分支、定时流水线 | MR 评审与 CI 自动化的高频治理场景;新写工具全部要求 token,列表在无 token 时返回业务值而非抛错 |
+| 2026-08-26 | 保护分支访问级别使用 no_access/developer/maintainer | 工具层接受字符串 enum 并映射 0/30/40,避免模型记忆 GitLab 整数;非法值返回业务错误 |

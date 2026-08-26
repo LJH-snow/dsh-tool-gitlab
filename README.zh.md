@@ -43,15 +43,15 @@ npm install /path/to/dsh-tool-gitlab
 
 完整示例见 [examples/cordis.yml](examples/cordis.yml)。
 
-> 安全:只读工具无需 token;写工具、MR 批准、流水线触发、私仓代码搜索、当前用户与 Todo 需要 token。建议使用最小权限 PAT(按需选择 `api`、`read_repository` 等 scope),切勿提交到仓库。
+> 安全:只读工具无需 token;写工具、MR 批准/审批规则管理、流水线触发/定时任务、保护分支、私仓代码搜索、当前用户与 Todo 需要 token。建议使用最小权限 PAT(按需选择 `api`、`read_repository` 等 scope),切勿提交到仓库。
 
 ## 与 GitHub 插件的差异化(企业向)
 
 | 领域 | 本插件(GitLab) | GitHub 插件 |
 |---|---|---|
-| MR 全生命周期 | `gitlab_get_mr_changes`(逐文件 diff)、`gitlab_list_mr_discussions`(评审讨论线)、`gitlab_reply_mr_discussion`、`gitlab_resolve_mr_discussion`、`gitlab_get_mr_approvals`(审批规则)、`gitlab_approve_mr`、`gitlab_merge_mr`(squash) | 仅 PR 草稿 + 合并 |
-| CI/CD | `gitlab_list_pipelines`、`gitlab_get_pipeline`(stages)、`gitlab_get_job_log`(完整日志)、`gitlab_trigger_pipeline` | 仅 workflow 运行列表 |
-| 组织与治理 | `gitlab_list_group_projects`、`gitlab_list_subgroups`、`gitlab_list_group_members`、`gitlab_list_project_members`(Guest→Owner 访问级别)、`gitlab_add_*_member`、`gitlab_update_*_member`、`gitlab_remove_*_member` | — |
+| MR 全生命周期 | `gitlab_get_mr_changes`(逐文件 diff)、`gitlab_list_mr_discussions`(评审讨论线)、`gitlab_reply_mr_discussion`、`gitlab_resolve_mr_discussion`、`gitlab_get_mr_approvals`、`gitlab_list/create/update/delete_mr_approval_rule`(规则管理)、`gitlab_approve_mr`、`gitlab_merge_mr`(squash) | 仅 PR 草稿 + 合并 |
+| CI/CD | `gitlab_list_pipelines`、`gitlab_get_pipeline`(stages)、`gitlab_get_job_log`(完整日志)、`gitlab_trigger_pipeline`、`gitlab_list/create/update/delete_pipeline_schedule`(cron 自动化) | 仅 workflow 运行列表 |
+| 组织与治理 | `gitlab_list_group_projects`、`gitlab_list_subgroups`、`gitlab_list_group_members`、`gitlab_list_project_members`(Guest→Owner 访问级别)、`gitlab_add_*_member`、`gitlab_update_*_member`、`gitlab_remove_*_member`、`gitlab_list/protect/unprotect branch` | — |
 | 项目管理 | `gitlab_create_project`、`gitlab_delete_project`(删除类 UI 卡片) | — |
 | 组管理 | `gitlab_create_group`、`gitlab_delete_group`;`gitlab_transfer_project`、`gitlab_archive_project`、`gitlab_unarchive_project` | — |
 | 自动化与 CI 配置 | `gitlab_list/create/delete_project_webhook`、`gitlab_list/create/update/delete_project_variable`(值永不暴露) | — |
@@ -79,6 +79,7 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_get_mr` | MR 详情:合并状态、CI 流水线、冲突、squash | 否 |
 | `gitlab_get_mr_changes` | 变更文件及逐文件 diff | 否 |
 | `gitlab_get_mr_approvals` | 批准状态:批准人、还需/已需数量、逐规则状态 | 否 |
+| `gitlab_list_mr_approval_rules` | MR 审批规则(可批准人、所需数量) | 是 |
 | `gitlab_list_mr_discussions` | 评审讨论线(含评论与解决状态) | 否 |
 | `gitlab_list_commits` | 提交列表(分支/作者过滤) | 否 |
 | `gitlab_get_file` | 读取仓库文件(base64 解码、支持 ref) | 否 |
@@ -90,11 +91,13 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_list_pipelines` | CI/CD 流水线(ref/status 过滤) | 否 |
 | `gitlab_get_pipeline` | 流水线详情(含 stages) | 否 |
 | `gitlab_get_job_log` | Job 完整日志(UI 显示 terminal 卡片) | 否* |
+| `gitlab_list_pipeline_schedules` | 定时流水线定义(cron、时区、上次运行) | 是 |
 | `gitlab_search_code` | 项目内代码搜索(blob) | 私仓需要 |
 | `gitlab_get_current_user` | 当前认证用户 | 是 |
 | `gitlab_list_todos` | 待办(指派/待批准/被提及) | 是 |
 | `gitlab_list_project_webhooks` | Webhook URL 与启用事件类型(仅元数据) | 私有项目 |
 | `gitlab_list_project_variables` | CI/CD 变量 key 与选项——值永不返回 | 私有项目 |
+| `gitlab_list_protected_branches` | 保护分支的 push/merge/unprotect 访问级别 | 是 |
 | `gitlab_list_runners` | 项目已分配的 Runner(状态/类型/访问级别) | 私有项目 |
 | `gitlab_list_registry_repositories` | 容器仓库列表(含 tag 数) | 私有项目 |
 | `gitlab_list_registry_tags` | 容器仓库 tag 列表(含 digest/大小) | 私有项目 |
@@ -112,11 +115,19 @@ npm install /path/to/dsh-tool-gitlab
 | `gitlab_comment_mr` | 评论 MR | 是 |
 | `gitlab_reply_mr_discussion` | 回复评审讨论线 | 是 |
 | `gitlab_resolve_mr_discussion` | 解决/取消解决评审讨论线 | 是 |
+| `gitlab_create_mr_approval_rule` | 创建 MR 审批规则(用户/组/所需数量) | 是 |
+| `gitlab_update_mr_approval_rule` | 更新 MR 审批规则 | 是 |
+| `gitlab_delete_mr_approval_rule` | 删除 MR 审批规则(删除类 UI 卡片) | 是 |
 | `gitlab_approve_mr` | 批准 MR(审批流) | 是 |
 | `gitlab_merge_mr` | 合并 MR(支持 squash) | 是 |
 | `gitlab_trigger_pipeline` | 为 ref 触发 CI/CD 流水线 | 是 |
+| `gitlab_create_pipeline_schedule` | 使用 cron 表达式创建定时流水线 | 是 |
+| `gitlab_update_pipeline_schedule` | 更新或暂停定时流水线 | 是 |
+| `gitlab_delete_pipeline_schedule` | 删除定时流水线(删除类 UI 卡片) | 是 |
 | `gitlab_create_branch` | 从 ref 创建分支 | 是 |
 | `gitlab_write_file` | 通过 commit 创建/更新文件(UI 显示 diff 卡片) | 是 |
+| `gitlab_protect_branch` | 按 push/merge/unprotect 级别保护分支 | 是 |
+| `gitlab_unprotect_branch` | 取消分支保护(删除类 UI 卡片) | 是 |
 | `gitlab_create_project` | 创建项目(可见性/命名空间/初始化 README) | 是 |
 | `gitlab_delete_project` | 永久删除项目(删除类 UI 卡片) | 是 |
 | `gitlab_add_group_member` | 添加组成员(guest→owner) | 是 |

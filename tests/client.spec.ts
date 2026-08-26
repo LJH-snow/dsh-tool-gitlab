@@ -843,4 +843,181 @@ describe('GitlabClient', () => {
     const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
     expect(await missing.getProjectExportStatus('a/b')).toEqual({ found: false })
   })
+
+  it('listMrApprovalRules maps rules and handles 404', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [
+      {
+        id: 5,
+        name: 'Security',
+        rule_type: 'regular',
+        approvals_required: 2,
+        eligible_approvers: [{ username: 'alice' }, { username: 'bob' }],
+        applies_to_all_protected_branches: true,
+      },
+    ]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const result = await client.listMrApprovalRules('a/b', 7)
+    expect(result).toEqual({
+      found: true,
+      authenticated: true,
+      items: [{
+        id: 5,
+        name: 'Security',
+        ruleType: 'regular',
+        approvalsRequired: 2,
+        eligibleApprovers: ['alice', 'bob'],
+        appliesToAllProtectedBranches: true,
+      }],
+    })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/projects/a%2Fb/merge_requests/7/approval_rules')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect(await missing.listMrApprovalRules('a/b', 8)).toEqual({ found: false, authenticated: true, items: [] })
+  })
+
+  it('create/update/delete MR approval rules use write endpoints', async () => {
+    const createImpl = vi.fn(async () => jsonResponse(201, { id: 5, name: 'Security' }))
+    const creator = new GitlabClient({ token: 'glpat_test', fetchImpl: createImpl })
+    expect(await creator.createMrApprovalRule('a/b', 7, {
+      name: 'Security', approvalsRequired: 2, userIds: [1], groupIds: [2],
+    })).toEqual({ ok: true, id: 5, name: 'Security' })
+    const [createUrl, createInit] = createImpl.mock.calls[0] as [string, RequestInit]
+    expect(createUrl).toContain('/projects/a%2Fb/merge_requests/7/approval_rules')
+    expect(createInit.method).toBe('POST')
+    expect(JSON.parse(String(createInit.body))).toMatchObject({
+      name: 'Security', approvals_required: 2, user_ids: [1], group_ids: [2],
+    })
+
+    const updateImpl = vi.fn(async () => jsonResponse(200, { id: 5, name: 'Security' }))
+    const updater = new GitlabClient({ token: 'glpat_test', fetchImpl: updateImpl })
+    expect(await updater.updateMrApprovalRule('a/b', 7, 5, { approvalsRequired: 3 })).toEqual({ ok: true, id: 5, name: 'Security' })
+    const [updateUrl, updateInit] = updateImpl.mock.calls[0] as [string, RequestInit]
+    expect(updateUrl).toContain('/approval_rules/5')
+    expect(updateInit.method).toBe('PUT')
+    expect(JSON.parse(String(updateInit.body))).toEqual({ approvals_required: 3 })
+
+    const deleteImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const deleter = new GitlabClient({ token: 'glpat_test', fetchImpl: deleteImpl })
+    expect(await deleter.deleteMrApprovalRule('a/b', 7, 5)).toEqual({ ok: true, id: 5 })
+    expect((deleteImpl.mock.calls[0] as [string, RequestInit])[1].method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.deleteMrApprovalRule('a/b', 7, 9)).ok).toBe(false)
+  })
+
+  it('listProtectedBranches maps access level descriptions', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [{
+      id: 1,
+      name: 'main',
+      push_access_levels: [{ access_level_description: 'Developers + Maintainers' }],
+      merge_access_levels: [{ access_level_description: 'Maintainers' }],
+      unprotect_access_levels: [],
+      allow_force_push: false,
+      code_owner_approval_required: true,
+      inherited: true,
+    }]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const branches = await client.listProtectedBranches('a/b')
+    expect(branches[0]).toEqual({
+      id: 1,
+      name: 'main',
+      pushAccess: 'Developers + Maintainers',
+      mergeAccess: 'Maintainers',
+      unprotectAccess: 'none',
+      allowForcePush: false,
+      codeOwnerApprovalRequired: true,
+      inherited: true,
+    })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/projects/a%2Fb/protected_branches?')
+  })
+
+  it('protectBranch maps access labels and unprotectBranch encodes the branch', async () => {
+    const postImpl = vi.fn(async () => jsonResponse(201, { id: 1, name: 'main' }))
+    const poster = new GitlabClient({ token: 'glpat_test', fetchImpl: postImpl })
+    expect(await poster.protectBranch('a/b', {
+      name: 'main', pushAccess: 'developer', mergeAccess: 'maintainer',
+    })).toEqual({ ok: true, name: 'main' })
+    const [, init] = postImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      name: 'main', push_access_level: 30, merge_access_level: 40, unprotect_access_level: 40,
+    })
+
+    const invalid = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn() })
+    expect((await invalid.protectBranch('a/b', { name: 'main', pushAccess: 'owner' })).ok).toBe(false)
+
+    const deleteImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const deleter = new GitlabClient({ token: 'glpat_test', fetchImpl: deleteImpl })
+    expect(await deleter.unprotectBranch('a/b', 'release/1.x')).toEqual({ ok: true, name: 'release/1.x' })
+    const [deleteUrl, deleteInit] = deleteImpl.mock.calls[0] as [string, RequestInit]
+    expect(deleteUrl).toContain('/projects/a%2Fb/protected_branches/release%2F1.x')
+    expect(deleteInit.method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.unprotectBranch('a/b', 'main')).ok).toBe(false)
+  })
+
+  it('listPipelineSchedules maps schedule metadata and last run', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, [{
+      id: 9,
+      description: 'Nightly E2E',
+      ref: 'main',
+      cron: '0 2 * * *',
+      cron_timezone: 'UTC',
+      next_run_at: '2026-08-27T02:00:00Z',
+      active: true,
+      owner: { username: 'alice' },
+      created_at: '2026-08-01T00:00:00Z',
+      updated_at: '2026-08-02T00:00:00Z',
+      last_pipeline: { id: 12, status: 'success' },
+    }]))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const schedules = await client.listPipelineSchedules('a/b', { active: true })
+    expect(schedules[0]).toEqual({
+      id: 9,
+      description: 'Nightly E2E',
+      ref: 'main',
+      cron: '0 2 * * *',
+      cronTimezone: 'UTC',
+      nextRunAt: '2026-08-27T02:00:00Z',
+      active: true,
+      owner: 'alice',
+      createdAt: '2026-08-01T00:00:00Z',
+      updatedAt: '2026-08-02T00:00:00Z',
+      lastPipeline: { id: 12, status: 'success' },
+    })
+    const [url] = fetchImpl.mock.calls[0] as [string]
+    expect(url).toContain('/projects/a%2Fb/pipeline_schedules?')
+    expect(url).toContain('active=true')
+  })
+
+  it('create/update/delete pipeline schedules use schedule endpoints', async () => {
+    const createImpl = vi.fn(async () => jsonResponse(201, { id: 9, description: 'Nightly E2E' }))
+    const creator = new GitlabClient({ token: 'glpat_test', fetchImpl: createImpl })
+    expect(await creator.createPipelineSchedule('a/b', {
+      description: 'Nightly E2E', ref: 'main', cron: '0 2 * * *', active: false,
+    })).toEqual({ ok: true, id: 9, description: 'Nightly E2E' })
+    const [createUrl, createInit] = createImpl.mock.calls[0] as [string, RequestInit]
+    expect(createUrl).toContain('/projects/a%2Fb/pipeline_schedules')
+    expect(createInit.method).toBe('POST')
+    expect(JSON.parse(String(createInit.body))).toMatchObject({
+      description: 'Nightly E2E', ref: 'main', cron: '0 2 * * *', active: false, cron_timezone: 'UTC',
+    })
+
+    const updateImpl = vi.fn(async () => jsonResponse(200, { id: 9, description: 'Nightly E2E' }))
+    const updater = new GitlabClient({ token: 'glpat_test', fetchImpl: updateImpl })
+    expect(await updater.updatePipelineSchedule('a/b', 9, { cronTimezone: 'Asia/Shanghai' })).toEqual({ ok: true, id: 9, description: 'Nightly E2E' })
+    const [, updateInit] = updateImpl.mock.calls[0] as [string, RequestInit]
+    expect(updateInit.method).toBe('PUT')
+    expect(JSON.parse(String(updateInit.body))).toEqual({ cron_timezone: 'Asia/Shanghai' })
+
+    const deleteImpl = vi.fn(async () => new Response(null, { status: 204 }))
+    const deleter = new GitlabClient({ token: 'glpat_test', fetchImpl: deleteImpl })
+    expect(await deleter.deletePipelineSchedule('a/b', 9)).toEqual({ ok: true, id: 9 })
+    expect((deleteImpl.mock.calls[0] as [string, RequestInit])[1].method).toBe('DELETE')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    expect((await missing.deletePipelineSchedule('a/b', 9)).ok).toBe(false)
+  })
 })

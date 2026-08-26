@@ -43,15 +43,15 @@ Load the plugin in a dsh composition config (`cordis.yml`):
 
 Full example: [examples/cordis.yml](examples/cordis.yml).
 
-> Security: read-only tools work without a token. Write tools, MR approval, pipeline triggering, code search on private projects, current-user, and todos require a token. Prefer a minimal-scope PAT (e.g. `api` + `read_repository` scopes as needed) and never commit it.
+> Security: read-only tools work without a token. Write tools, MR approval/rule management, pipeline triggering/schedules, protected branches, code search on private projects, current-user, and todos require a token. Prefer a minimal-scope PAT (e.g. `api` + `read_repository` scopes as needed) and never commit it.
 
 ## Enterprise differentiators
 
 | Area | GitLab plugin tools | What the GitHub plugin has |
 |---|---|---|
-| Merge Request lifecycle | `gitlab_get_mr_changes` (per-file diffs), `gitlab_list_mr_discussions` (review threads), `gitlab_reply_mr_discussion`, `gitlab_resolve_mr_discussion`, `gitlab_get_mr_approvals` (approval rules), `gitlab_approve_mr`, `gitlab_merge_mr` (squash) | PR draft + merge only |
-| CI/CD | `gitlab_list_pipelines`, `gitlab_get_pipeline` (stages), `gitlab_get_job_log` (full trace), `gitlab_trigger_pipeline` | workflow run list only |
-| Org & governance | `gitlab_list_group_projects`, `gitlab_list_subgroups`, `gitlab_list_group_members`, `gitlab_list_project_members` (Guest→Owner access levels), `gitlab_add_*_member`, `gitlab_update_*_member`, `gitlab_remove_*_member` | — |
+| Merge Request lifecycle | `gitlab_get_mr_changes` (per-file diffs), `gitlab_list_mr_discussions` (review threads), `gitlab_reply_mr_discussion`, `gitlab_resolve_mr_discussion`, `gitlab_get_mr_approvals`, `gitlab_list/create/update/delete_mr_approval_rule` (rule management), `gitlab_approve_mr`, `gitlab_merge_mr` (squash) | PR draft + merge only |
+| CI/CD | `gitlab_list_pipelines`, `gitlab_get_pipeline` (stages), `gitlab_get_job_log` (full trace), `gitlab_trigger_pipeline`, `gitlab_list/create/update/delete_pipeline_schedule` (cron automation) | workflow run list only |
+| Org & governance | `gitlab_list_group_projects`, `gitlab_list_subgroups`, `gitlab_list_group_members`, `gitlab_list_project_members` (Guest→Owner access levels), `gitlab_add_*_member`, `gitlab_update_*_member`, `gitlab_remove_*_member`, `gitlab_list/protect/unprotect branch` | — |
 | Project management | `gitlab_create_project`, `gitlab_delete_project` (delete-kind UI cards) | — |
 | Group management | `gitlab_create_group`, `gitlab_delete_group`; `gitlab_transfer_project`, `gitlab_archive_project`, `gitlab_unarchive_project` | — |
 | Automation & CI config | `gitlab_list/create/delete_project_webhook`, `gitlab_list/create/update/delete_project_variable` (values never exposed) | — |
@@ -79,6 +79,7 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_get_mr` | MR details: merge status, CI pipeline, conflicts, squash | no |
 | `gitlab_get_mr_changes` | Changed files with per-file diff hunks | no |
 | `gitlab_get_mr_approvals` | Approval status: approvers, required/left, per-rule state | no |
+| `gitlab_list_mr_approval_rules` | MR approval rules with eligible approvers and required counts | yes |
 | `gitlab_list_mr_discussions` | Review threads with notes and resolution state | no |
 | `gitlab_list_commits` | Commits (branch/author filters) | no |
 | `gitlab_get_file` | Read a repository file (base64-decoded, ref support) | no |
@@ -90,11 +91,13 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_list_pipelines` | CI/CD pipelines (ref/status filters) | no |
 | `gitlab_get_pipeline` | Pipeline details with stages | no |
 | `gitlab_get_job_log` | Full job log trace (terminal card in UI) | no* |
+| `gitlab_list_pipeline_schedules` | Scheduled pipeline definitions with cron, timezone, last run | yes |
 | `gitlab_search_code` | Blob code search inside a project | private projects |
 | `gitlab_get_current_user` | Authenticated user identity | yes |
 | `gitlab_list_todos` | Pending todos (assigned, approval-required, mentioned) | yes |
 | `gitlab_list_project_webhooks` | Webhook URLs and enabled event types (metadata only) | private projects |
 | `gitlab_list_project_variables` | CI/CD variable keys and options — values are never returned | private projects |
+| `gitlab_list_protected_branches` | Protected branch push/merge/unprotect access levels | yes |
 | `gitlab_list_runners` | Runners assigned to a project (status, type, access level) | private projects |
 | `gitlab_list_registry_repositories` | Container registry repositories with tag counts | private projects |
 | `gitlab_list_registry_tags` | Container registry tags with digests and sizes | private projects |
@@ -112,11 +115,19 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | `gitlab_comment_mr` | Comment on a merge request | yes |
 | `gitlab_reply_mr_discussion` | Reply to a review discussion thread | yes |
 | `gitlab_resolve_mr_discussion` | Resolve/unresolve a review discussion thread | yes |
+| `gitlab_create_mr_approval_rule` | Create an MR approval rule (users/groups/count) | yes |
+| `gitlab_update_mr_approval_rule` | Update an MR approval rule | yes |
+| `gitlab_delete_mr_approval_rule` | Delete an MR approval rule (delete-kind UI card) | yes |
 | `gitlab_approve_mr` | Approve a merge request (approval flow) | yes |
 | `gitlab_merge_mr` | Merge a merge request (squash supported) | yes |
 | `gitlab_trigger_pipeline` | Trigger a CI/CD pipeline for a ref | yes |
+| `gitlab_create_pipeline_schedule` | Create a scheduled pipeline with a cron expression | yes |
+| `gitlab_update_pipeline_schedule` | Update or pause a scheduled pipeline | yes |
+| `gitlab_delete_pipeline_schedule` | Delete a scheduled pipeline (delete-kind UI card) | yes |
 | `gitlab_create_branch` | Create a branch from a ref | yes |
 | `gitlab_write_file` | Create/update a file via a commit (diff card in UI) | yes |
+| `gitlab_protect_branch` | Protect a branch with push/merge/unprotect access levels | yes |
+| `gitlab_unprotect_branch` | Remove branch protection (delete-kind UI card) | yes |
 | `gitlab_create_project` | Create a project (visibility, namespace, README init) | yes |
 | `gitlab_delete_project` | Permanently delete a project (delete-kind UI card) | yes |
 | `gitlab_add_group_member` | Add a member to a group (guest→owner) | yes |

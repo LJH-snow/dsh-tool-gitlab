@@ -212,6 +212,66 @@ export interface MrApprovals {
   }>
 }
 
+export interface ApprovalRuleItem {
+  id: number
+  name: string
+  ruleType: string
+  approvalsRequired: number
+  eligibleApprovers: string[]
+  appliesToAllProtectedBranches: boolean
+}
+
+export interface ApprovalRuleListResult {
+  found: boolean
+  authenticated: boolean
+  items: ApprovalRuleItem[]
+}
+
+export interface ApprovalRuleWriteResult {
+  ok: boolean
+  id?: number
+  name?: string
+  reason?: string
+}
+
+export interface ProtectedBranchItem {
+  id: number
+  name: string
+  pushAccess: string
+  mergeAccess: string
+  unprotectAccess: string
+  allowForcePush: boolean
+  codeOwnerApprovalRequired: boolean
+  inherited: boolean
+}
+
+export interface ProtectedBranchWriteResult {
+  ok: boolean
+  name?: string
+  reason?: string
+}
+
+export interface PipelineScheduleItem {
+  id: number
+  description: string
+  ref: string
+  cron: string
+  cronTimezone: string
+  nextRunAt: string | null
+  active: boolean
+  owner: string
+  createdAt: string
+  updatedAt: string
+  lastPipeline: { id: number; status: string } | null
+}
+
+export interface PipelineScheduleWriteResult {
+  ok: boolean
+  id?: number
+  description?: string
+  reason?: string
+}
+
 export interface PipelineItem {
   id: number
   ref: string
@@ -467,6 +527,7 @@ export interface ProjectExportStatusResult {
 export type IssueState = 'opened' | 'closed' | 'all'
 export type MrState = 'opened' | 'closed' | 'merged' | 'all'
 export type AccessLevelInput = string | number
+export type ProtectedBranchAccessInput = string | number
 
 const ACCESS_LEVELS: Record<number, string> = {
   10: 'Guest',
@@ -491,6 +552,23 @@ const LEVEL_LABELS: Record<string, number> = {
 export function accessLevelValue(input: AccessLevelInput): number | undefined {
   if (typeof input === 'number') return ACCESS_LEVELS[input] !== undefined ? input : undefined
   return LEVEL_LABELS[input.trim().toLowerCase()]
+}
+
+const PROTECTED_BRANCH_LEVELS: Record<string, number> = {
+  no_access: 0,
+  none: 0,
+  developer: 30,
+  maintainer: 40,
+}
+
+export function protectedBranchAccessValue(input: ProtectedBranchAccessInput): number | undefined {
+  if (typeof input === 'number') return input === 0 || input === 30 || input === 40 ? input : undefined
+  return PROTECTED_BRANCH_LEVELS[input.trim().toLowerCase()]
+}
+
+function accessDescriptions(levels: Array<{ access_level_description?: string }> | undefined): string {
+  const names = (levels ?? []).map(level => level.access_level_description ?? '').filter(Boolean)
+  return names.length > 0 ? names.join('/') : 'none'
 }
 
 export class GitlabError extends Error {
@@ -936,6 +1014,297 @@ export class GitlabClient {
         approved: rule.approved,
         approvedBy: (rule.approved_by ?? []).map(item => item.user.username),
       })),
+    }
+  }
+
+  async listMrApprovalRules(project: string, mrIid: number, signal?: AbortSignal): Promise<ApprovalRuleListResult> {
+    try {
+      const data = await this.request<Array<{
+        id: number
+        name: string
+        rule_type: string
+        approvals_required: number
+        eligible_approvers?: Array<{ username: string }>
+        applies_to_all_protected_branches?: boolean
+      }>>(`/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/approval_rules`, { signal })
+      return {
+        found: true,
+        authenticated: true,
+        items: data.map(item => ({
+          id: item.id,
+          name: item.name,
+          ruleType: item.rule_type,
+          approvalsRequired: item.approvals_required,
+          eligibleApprovers: (item.eligible_approvers ?? []).map(user => user.username),
+          appliesToAllProtectedBranches: item.applies_to_all_protected_branches ?? false,
+        })),
+      }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { found: false, authenticated: true, items: [] }
+      }
+      throw error
+    }
+  }
+
+  async createMrApprovalRule(project: string, mrIid: number, input: {
+    name: string
+    approvalsRequired?: number
+    userIds?: number[]
+    groupIds?: number[]
+    appliesToAllProtectedBranches?: boolean
+    signal?: AbortSignal
+  }): Promise<ApprovalRuleWriteResult> {
+    try {
+      const data = await this.request<{ id: number; name: string }>(
+        `/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/approval_rules`,
+        {
+          method: 'POST',
+          body: {
+            name: input.name,
+            approvals_required: input.approvalsRequired ?? 1,
+            user_ids: input.userIds ?? [],
+            group_ids: input.groupIds ?? [],
+            applies_to_all_protected_branches: input.appliesToAllProtectedBranches ?? false,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, id: data.id, name: data.name }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the approval rule (MR not found or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async updateMrApprovalRule(project: string, mrIid: number, ruleId: number, input: {
+    name?: string
+    approvalsRequired?: number
+    userIds?: number[]
+    groupIds?: number[]
+    appliesToAllProtectedBranches?: boolean
+    signal?: AbortSignal
+  }): Promise<ApprovalRuleWriteResult> {
+    try {
+      const body: Record<string, unknown> = {}
+      if (input.name !== undefined) body.name = input.name
+      if (input.approvalsRequired !== undefined) body.approvals_required = input.approvalsRequired
+      if (input.userIds !== undefined) body.user_ids = input.userIds
+      if (input.groupIds !== undefined) body.group_ids = input.groupIds
+      if (input.appliesToAllProtectedBranches !== undefined) body.applies_to_all_protected_branches = input.appliesToAllProtectedBranches
+      const data = await this.request<{ id: number; name: string }>(
+        `/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/approval_rules/${ruleId}`,
+        { method: 'PUT', body, signal: input.signal },
+      )
+      return { ok: true, id: data.id, name: data.name }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not update the approval rule (not found or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async deleteMrApprovalRule(project: string, mrIid: number, ruleId: number, signal?: AbortSignal): Promise<ApprovalRuleWriteResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}/approval_rules/${ruleId}`,
+        { method: 'DELETE', signal },
+      )
+      return { ok: true, id: ruleId }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Approval rule not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listProtectedBranches(project: string, options: { perPage?: number; signal?: AbortSignal } = {}): Promise<ProtectedBranchItem[]> {
+    const data = await this.request<Array<{
+      id: number
+      name: string
+      push_access_levels?: Array<{ access_level_description?: string }>
+      merge_access_levels?: Array<{ access_level_description?: string }>
+      unprotect_access_levels?: Array<{ access_level_description?: string }>
+      allow_force_push?: boolean
+      code_owner_approval_required?: boolean
+      inherited?: boolean
+    }>>(`/projects/${encodeURIComponent(project)}/protected_branches?${this.pageParams(options.perPage)}`, { signal: options.signal })
+    return data.map(item => ({
+      id: item.id,
+      name: item.name,
+      pushAccess: accessDescriptions(item.push_access_levels),
+      mergeAccess: accessDescriptions(item.merge_access_levels),
+      unprotectAccess: accessDescriptions(item.unprotect_access_levels),
+      allowForcePush: item.allow_force_push ?? false,
+      codeOwnerApprovalRequired: item.code_owner_approval_required ?? false,
+      inherited: item.inherited ?? false,
+    }))
+  }
+
+  async protectBranch(project: string, input: {
+    name: string
+    pushAccess?: ProtectedBranchAccessInput
+    mergeAccess?: ProtectedBranchAccessInput
+    unprotectAccess?: ProtectedBranchAccessInput
+    allowForcePush?: boolean
+    codeOwnerApprovalRequired?: boolean
+    signal?: AbortSignal
+  }): Promise<ProtectedBranchWriteResult> {
+    const pushAccess = protectedBranchAccessValue(input.pushAccess ?? 40)
+    const mergeAccess = protectedBranchAccessValue(input.mergeAccess ?? 40)
+    const unprotectAccess = protectedBranchAccessValue(input.unprotectAccess ?? 40)
+    if (pushAccess === undefined || mergeAccess === undefined || unprotectAccess === undefined) {
+      return { ok: false, name: input.name, reason: 'Invalid protected branch access level. Use no_access/developer/maintainer or 0/30/40.' }
+    }
+    try {
+      const data = await this.request<{ id: number; name: string }>(
+        `/projects/${encodeURIComponent(project)}/protected_branches`,
+        {
+          method: 'POST',
+          body: {
+            name: input.name,
+            push_access_level: pushAccess,
+            merge_access_level: mergeAccess,
+            unprotect_access_level: unprotectAccess,
+            allow_force_push: input.allowForcePush ?? false,
+            code_owner_approval_required: input.codeOwnerApprovalRequired ?? false,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, name: data.name }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, name: input.name, reason: 'Could not protect the branch (branch not found, already protected, or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async unprotectBranch(project: string, branch: string, signal?: AbortSignal): Promise<ProtectedBranchWriteResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/protected_branches/${encodeURIComponent(branch)}`,
+        { method: 'DELETE', signal },
+      )
+      return { ok: true, name: branch }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, name: branch, reason: 'Protected branch not found.' }
+      }
+      throw error
+    }
+  }
+
+  async listPipelineSchedules(project: string, options: { active?: boolean; perPage?: number; signal?: AbortSignal } = {}): Promise<PipelineScheduleItem[]> {
+    const params = new URLSearchParams({
+      ...(options.active !== undefined ? { active: String(options.active) } : {}),
+      ...(options.perPage ? { per_page: String(options.perPage) } : {}),
+    })
+    const data = await this.request<Array<{
+      id: number
+      description: string
+      ref: string
+      cron: string
+      cron_timezone: string
+      next_run_at: string | null
+      active: boolean
+      owner: { username: string } | null
+      created_at: string
+      updated_at: string
+      last_pipeline: { id: number; status: string } | null
+    }>>(`/projects/${encodeURIComponent(project)}/pipeline_schedules?${params}`, { signal: options.signal })
+    return data.map(item => ({
+      id: item.id,
+      description: item.description,
+      ref: item.ref,
+      cron: item.cron,
+      cronTimezone: item.cron_timezone,
+      nextRunAt: item.next_run_at,
+      active: item.active,
+      owner: item.owner?.username ?? '',
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+      lastPipeline: item.last_pipeline ? { id: item.last_pipeline.id, status: item.last_pipeline.status } : null,
+    }))
+  }
+
+  async createPipelineSchedule(project: string, input: {
+    description: string
+    ref: string
+    cron: string
+    cronTimezone?: string
+    active?: boolean
+    signal?: AbortSignal
+  }): Promise<PipelineScheduleWriteResult> {
+    try {
+      const data = await this.request<{ id: number; description: string }>(
+        `/projects/${encodeURIComponent(project)}/pipeline_schedules`,
+        {
+          method: 'POST',
+          body: {
+            description: input.description,
+            ref: input.ref,
+            cron: input.cron,
+            cron_timezone: input.cronTimezone ?? 'UTC',
+            active: input.active ?? true,
+          },
+          signal: input.signal,
+        },
+      )
+      return { ok: true, id: data.id, description: data.description }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 409 || error.status === 422)) {
+        return { ok: false, reason: 'Could not create the pipeline schedule (ref not found, cron invalid, or project not found).' }
+      }
+      throw error
+    }
+  }
+
+  async updatePipelineSchedule(project: string, scheduleId: number, input: {
+    description?: string
+    ref?: string
+    cron?: string
+    cronTimezone?: string
+    active?: boolean
+    signal?: AbortSignal
+  }): Promise<PipelineScheduleWriteResult> {
+    try {
+      const body: Record<string, unknown> = {}
+      if (input.description !== undefined) body.description = input.description
+      if (input.ref !== undefined) body.ref = input.ref
+      if (input.cron !== undefined) body.cron = input.cron
+      if (input.cronTimezone !== undefined) body.cron_timezone = input.cronTimezone
+      if (input.active !== undefined) body.active = input.active
+      const data = await this.request<{ id: number; description: string }>(
+        `/projects/${encodeURIComponent(project)}/pipeline_schedules/${scheduleId}`,
+        { method: 'PUT', body, signal: input.signal },
+      )
+      return { ok: true, id: data.id, description: data.description }
+    } catch (error) {
+      if (error instanceof GitlabError && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        return { ok: false, reason: 'Could not update the pipeline schedule (not found or validation failed).' }
+      }
+      throw error
+    }
+  }
+
+  async deletePipelineSchedule(project: string, scheduleId: number, signal?: AbortSignal): Promise<PipelineScheduleWriteResult> {
+    try {
+      await this.request<unknown>(
+        `/projects/${encodeURIComponent(project)}/pipeline_schedules/${scheduleId}`,
+        { method: 'DELETE', signal },
+      )
+      return { ok: true, id: scheduleId }
+    } catch (error) {
+      if (error instanceof GitlabError && error.status === 404) {
+        return { ok: false, reason: 'Pipeline schedule not found.' }
+      }
+      throw error
     }
   }
 

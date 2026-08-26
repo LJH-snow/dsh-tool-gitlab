@@ -26,11 +26,15 @@ describe('tool definitions', () => {
       'gitlab_create_group',
       'gitlab_create_issue',
       'gitlab_create_mr',
+      'gitlab_create_mr_approval_rule',
+      'gitlab_create_pipeline_schedule',
       'gitlab_create_project',
       'gitlab_create_project_mirror',
       'gitlab_create_project_variable',
       'gitlab_create_project_webhook',
       'gitlab_delete_group',
+      'gitlab_delete_mr_approval_rule',
+      'gitlab_delete_pipeline_schedule',
       'gitlab_delete_project',
       'gitlab_delete_project_variable',
       'gitlab_delete_project_webhook',
@@ -57,13 +61,16 @@ describe('tool definitions', () => {
       'gitlab_list_issues',
       'gitlab_list_labels',
       'gitlab_list_milestones',
+      'gitlab_list_mr_approval_rules',
       'gitlab_list_mr_discussions',
       'gitlab_list_mrs',
+      'gitlab_list_pipeline_schedules',
       'gitlab_list_pipelines',
       'gitlab_list_project_members',
       'gitlab_list_project_mirrors',
       'gitlab_list_project_variables',
       'gitlab_list_project_webhooks',
+      'gitlab_list_protected_branches',
       'gitlab_list_registry_repositories',
       'gitlab_list_registry_tags',
       'gitlab_list_releases',
@@ -71,6 +78,7 @@ describe('tool definitions', () => {
       'gitlab_list_subgroups',
       'gitlab_list_todos',
       'gitlab_merge_mr',
+      'gitlab_protect_branch',
       'gitlab_remove_group_member',
       'gitlab_remove_project_member',
       'gitlab_reply_mr_discussion',
@@ -81,8 +89,11 @@ describe('tool definitions', () => {
       'gitlab_transfer_project',
       'gitlab_trigger_pipeline',
       'gitlab_unarchive_project',
+      'gitlab_unprotect_branch',
       'gitlab_update_group_member',
       'gitlab_update_issue',
+      'gitlab_update_mr_approval_rule',
+      'gitlab_update_pipeline_schedule',
       'gitlab_update_project_member',
       'gitlab_update_project_variable',
       'gitlab_write_file',
@@ -441,5 +452,81 @@ describe('tool definitions', () => {
     expect(map.gitlab_disable_project_runner.presentCall!({ project: 'a/b', runnerId: 8 })).toMatchObject({ kind: 'edit' })
     expect(map.gitlab_create_project_mirror.presentCall!({ project: 'a/b', url: 'u' })).toMatchObject({ kind: 'edit' })
     expect(map.gitlab_start_project_export.presentCall!({ project: 'a/b' })).toMatchObject({ kind: 'edit' })
+  })
+
+  it('v0.6 list tools report unauthenticated without a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(await map.gitlab_list_mr_approval_rules.execute({ project: 'a/b', iid: 7 }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_list_protected_branches.execute({ project: 'a/b' }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+    expect(await map.gitlab_list_pipeline_schedules.execute({ project: 'a/b' }, exec())).toEqual({ found: true, authenticated: false, items: [] })
+  })
+
+  it('v0.6 write tools require a token', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(await map.gitlab_create_mr_approval_rule.execute({ project: 'a/b', iid: 7, name: 'Security' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_update_mr_approval_rule.execute({ project: 'a/b', iid: 7, ruleId: 1, name: 'Security' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_mr_approval_rule.execute({ project: 'a/b', iid: 7, ruleId: 1 }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_protect_branch.execute({ project: 'a/b', name: 'main' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_unprotect_branch.execute({ project: 'a/b', branch: 'main' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_create_pipeline_schedule.execute({ project: 'a/b', description: 'x', ref: 'main', cron: '0 9 * * *' }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_update_pipeline_schedule.execute({ project: 'a/b', scheduleId: 1, active: true }, exec())).toMatchObject({ ok: false })
+    expect(await map.gitlab_delete_pipeline_schedule.execute({ project: 'a/b', scheduleId: 1 }, exec())).toMatchObject({ ok: false })
+  })
+
+  it('gitlab_list_mr_approval_rules renders rules and maps 404', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const tool = createTools(client).find(t => t.name === 'gitlab_list_mr_approval_rules')!
+    const blocks = await (tool.output as { render: (a: unknown, v: any) => unknown }).render({}, {
+      found: true, authenticated: true,
+      items: [{ name: 'Security', approvalsRequired: 2, eligibleApprovers: ['alice'] }],
+    })
+    expect(JSON.stringify(blocks)).toContain('Security: 2 required, alice')
+
+    const missing = new GitlabClient({ token: 'glpat_test', fetchImpl: vi.fn(async () => jsonResponse(404, {})) })
+    const mtool = createTools(missing).find(t => t.name === 'gitlab_list_mr_approval_rules')!
+    expect(await mtool.execute({ project: 'a/b', iid: 7 }, exec())).toEqual({ found: false, authenticated: true, items: [] })
+  })
+
+  it('gitlab_create_pipeline_schedule sends cron params and returns no secret payload', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 9, description: 'Nightly', cron: '0 9 * * *' }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_create_pipeline_schedule.execute({
+      project: 'a/b', description: 'Nightly', ref: 'main', cron: '0 9 * * *', cronTimezone: 'Asia/Shanghai', active: false,
+    }, exec())
+    expect(result).toEqual({ ok: true, id: 9, description: 'Nightly' })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      description: 'Nightly', ref: 'main', cron: '0 9 * * *', cron_timezone: 'Asia/Shanghai', active: false,
+    })
+  })
+
+  it('gitlab_protect_branch sends selected access levels', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(201, { id: 1, name: 'main', push_access_levels: [], merge_access_levels: [] }))
+    const client = new GitlabClient({ token: 'glpat_test', fetchImpl })
+    const map = Object.fromEntries(createTools(client).map(t => [t.name, t]))
+    const result = await map.gitlab_protect_branch.execute({
+      project: 'a/b', name: 'main', pushAccess: 'developer', mergeAccess: 'maintainer', allowForcePush: true,
+    }, exec())
+    expect(result).toEqual({ ok: true, name: 'main' })
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      name: 'main', push_access_level: 30, merge_access_level: 40, unprotect_access_level: 40, allow_force_push: true,
+    })
+  })
+
+  it('v0.6 present kinds match governance actions', async () => {
+    const client = new GitlabClient({ fetchImpl: vi.fn() })
+    const map = tools()
+    expect(map.gitlab_create_mr_approval_rule.presentCall!({ project: 'a/b', iid: 7, name: 'Security' })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_update_mr_approval_rule.presentCall!({ project: 'a/b', iid: 7, ruleId: 1 })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_delete_mr_approval_rule.presentCall!({ project: 'a/b', iid: 7, ruleId: 1 })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_protect_branch.presentCall!({ project: 'a/b', name: 'main' })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_unprotect_branch.presentCall!({ project: 'a/b', branch: 'main' })).toMatchObject({ kind: 'delete' })
+    expect(map.gitlab_create_pipeline_schedule.presentCall!({ project: 'a/b', description: 'x', ref: 'main', cron: '0 9 * * *' })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_update_pipeline_schedule.presentCall!({ project: 'a/b', scheduleId: 1 })).toMatchObject({ kind: 'edit' })
+    expect(map.gitlab_delete_pipeline_schedule.presentCall!({ project: 'a/b', scheduleId: 1 })).toMatchObject({ kind: 'delete' })
   })
 })
