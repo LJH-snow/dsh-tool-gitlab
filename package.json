@@ -42,6 +42,7 @@
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "awesome-dsh-plugin",
     "cordis",
     "gitlab",
     "ci",
