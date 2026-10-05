@@ -1021,3 +1021,68 @@ describe('GitlabClient', () => {
     expect((await missing.deletePipelineSchedule('a/b', 9)).ok).toBe(false)
   })
 })
+
+describe('GitLab endpoint policy', () => {
+  const valid = { token: 'glpat_test' }
+  const ok = () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  const call = (client: GitlabClient) => client.getProject('g/p')
+
+  it('rejects literal link-local endpoints by default, including IPv4 embedded in IPv6', async () => {
+    for (const baseUrl of [
+      'http://169.254.169.254',
+      'http://169.254.1.1',
+      'http://[fe80::1]',
+      'http://[::ffff:169.254.169.254]',
+      'http://[64:ff9b::a9fe:a9fe]',
+      'http://[::169.254.169.254]',
+    ]) {
+      const fetchImpl = vi.fn()
+      await expect(call(new GitlabClient({ ...valid, baseUrl, fetchImpl }))).rejects.toBeInstanceOf(GitlabError)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  })
+
+  it('keeps self-hosted private and loopback endpoints working by default', async () => {
+    for (const baseUrl of [
+      'http://10.0.0.5',
+      'http://172.16.4.4',
+      'http://192.168.1.10',
+      'http://127.0.0.1:8080',
+      'http://[fc00::1]',
+    ]) {
+      const fetchImpl = vi.fn(async () => ok())
+      await call(new GitlabClient({ ...valid, baseUrl, fetchImpl })).catch(() => undefined)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('performs no DNS work in the default mode', async () => {
+    const lookupImpl = vi.fn(async () => { throw new Error('default mode must not resolve hostnames') })
+    const fetchImpl = vi.fn(async () => ok())
+    await call(new GitlabClient({ ...valid, baseUrl: 'https://gitlab.internal.corp', fetchImpl, lookupImpl })).catch(() => undefined)
+    expect(lookupImpl).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects private and link-local endpoints when enforcePublicEndpoint is on', async () => {
+    for (const baseUrl of ['http://10.0.0.5', 'http://127.0.0.1', 'http://169.254.169.254', 'http://[fc00::1]']) {
+      const fetchImpl = vi.fn()
+      await expect(call(new GitlabClient({ ...valid, baseUrl, fetchImpl, enforcePublicEndpoint: true }))).rejects.toBeInstanceOf(GitlabError)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  })
+
+  it('resolves and rejects blocked hostnames only when enforcePublicEndpoint is on', async () => {
+    const lookupImpl = async () => [{ address: '169.254.169.254', family: 4 as const }]
+    const fetchImpl = vi.fn()
+    await expect(call(new GitlabClient({ ...valid, baseUrl: 'https://metadata.gitlab.test', fetchImpl, lookupImpl, enforcePublicEndpoint: true }))).rejects.toBeInstanceOf(GitlabError)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('allows a public endpoint when enforcePublicEndpoint is on', async () => {
+    const lookupImpl = async () => [{ address: '93.184.216.34', family: 4 as const }]
+    const fetchImpl = vi.fn(async () => ok())
+    await call(new GitlabClient({ ...valid, baseUrl: 'https://gitlab.example.test', fetchImpl, lookupImpl, enforcePublicEndpoint: true })).catch(() => undefined)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+})

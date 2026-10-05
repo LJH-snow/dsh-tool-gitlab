@@ -1,7 +1,7 @@
 {
   "name": "@libai168/dsh-tool-gitlab",
   "description": "GitLab tools for DeepSeek Harness: MR lifecycle with approvals, CI/CD pipelines, group & member governance, todos, and project search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

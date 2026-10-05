@@ -61,6 +61,8 @@ Full example: [examples/cordis.yml](examples/cordis.yml).
 | Self-managed | `baseUrl` override for on-premises GitLab | GitHub Enterprise baseUrl |
 | Review UX | `search`-card MR changes, `diff`-card file writes, `terminal`-card job logs | generic/search cards |
 
+The endpoint is checked before every request. Link-local addresses (`169.254.0.0/16`, `fe80::/10`, including their IPv4-mapped and NAT64 forms) are always rejected: they are never a valid API endpoint and include the cloud metadata address. Self-hosted endpoints on private networks keep working by default. Set `enforcePublicEndpoint: true` to additionally require a publicly reachable host; that mode also resolves ordinary hostnames and rejects loopback, private, CGNAT, multicast, reserved, and every IANA special-purpose range.
+
 ## Tools
 
 ### Read-only

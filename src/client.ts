@@ -1,9 +1,15 @@
 /** GitLab REST API v4 client with injected fetch for testability. */
 
+import { EndpointSecurityError, guardEndpoint, normalizeBaseUrl, type EndpointPolicy, type LookupImpl } from './url-security.js'
+
 export interface GitlabClientOptions {
   baseUrl?: string
   token?: string
   fetchImpl?: typeof fetch
+  /** Require a publicly reachable endpoint and resolve hostnames. Off by default so self-hosted deployments keep working. */
+  enforcePublicEndpoint?: boolean
+  /** Test-only DNS lookup override; production uses node:dns/promises. */
+  lookupImpl?: LookupImpl
   /** Request timeout in milliseconds. 0 disables the timeout. */
   timeoutMs?: number
 }
@@ -582,12 +588,21 @@ export class GitlabClient {
   private readonly token: string | undefined
   private readonly fetchImpl: typeof fetch
   private readonly timeoutMs: number
+  private readonly endpointPolicy: EndpointPolicy
 
   constructor(options: GitlabClientOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? 'https://gitlab.com/api/v4').replace(/\/$/, '')
+    try {
+      this.baseUrl = options.enforcePublicEndpoint === true
+        ? normalizeBaseUrl(options.baseUrl, 'https://gitlab.com/api/v4')
+        : (options.baseUrl ?? 'https://gitlab.com/api/v4').replace(/\/$/, '')
+    } catch (error) {
+      if (error instanceof EndpointSecurityError) throw new GitlabError(error.message, 400)
+      throw error
+    }
     this.token = options.token
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch
     this.timeoutMs = options.timeoutMs ?? 15_000
+    this.endpointPolicy = { enforcePublicEndpoint: options.enforcePublicEndpoint === true, lookupImpl: options.lookupImpl }
   }
 
   hasToken(): boolean {
@@ -616,14 +631,18 @@ export class GitlabClient {
       headers['content-type'] = 'application/json'
       init.body = JSON.stringify(options.body)
     }
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, init)
+        const blocked = await guardEndpoint(`${this.baseUrl}${path}`, this.endpointPolicy)
+    if (blocked) throw new GitlabError(blocked, 400)
+const res = await this.fetchImpl(`${this.baseUrl}${path}`, init)
     this.throwOnError(res)
     if (res.status === 204) return undefined as T
     return (await res.json()) as T
   }
 
   private async requestText(path: string, options: { signal?: AbortSignal } = {}): Promise<string> {
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        const blocked = await guardEndpoint(`${this.baseUrl}${path}`, this.endpointPolicy)
+    if (blocked) throw new GitlabError(blocked, 400)
+const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       headers: this.headers(),
       method: 'GET',
       signal: this.combinedSignal(options.signal),
