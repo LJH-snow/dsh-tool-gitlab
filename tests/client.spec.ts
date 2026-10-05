@@ -1086,3 +1086,11 @@ describe('GitLab endpoint policy', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('GitlabError identity', () => {
+  it('reports its own class name so callers can branch on error.name', () => {
+    const error = new GitlabError('probe', 400)
+    expect(error).toBeInstanceOf(GitlabError)
+    expect(error.name).toBe('GitlabError')
+  })
+})

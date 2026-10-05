@@ -580,6 +580,7 @@ function accessDescriptions(levels: Array<{ access_level_description?: string }>
 export class GitlabError extends Error {
   constructor(message: string, readonly status: number) {
     super(message)
+    this.name = 'GitlabError'
   }
 }
 
