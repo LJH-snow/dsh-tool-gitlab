@@ -230,7 +230,18 @@ export async function assertSafeUrl(url: URL, lookupImpl: LookupImpl = defaultLo
  * Sentry) cannot default to the public-endpoint policy without breaking their
  * advertised deployment mode. They therefore default to a narrow, always-on
  * guard and opt into the full policy explicitly.
+ *
+ * The default guard blocks addresses that can never be a deliberately configured
+ * endpoint: link-local (which includes the cloud metadata address) and the
+ * unspecified address. Loopback, RFC1918, and unique-local addresses are left
+ * alone because self-hosting legitimately uses them.
  * ------------------------------------------------------------------------- */
+
+/** Rejected regardless of policy: never a valid configured endpoint. */
+const ALWAYS_BLOCKED_IPV4: ReadonlyArray<readonly [string, number]> = [
+  ['0.0.0.0', 8], // unspecified / "this network"; routed to loopback by some stacks
+  ['169.254.0.0', 16], // link-local, includes the cloud metadata address
+]
 
 /** IPv6 prefixes that embed an IPv4 destination. */
 const IPV4_EMBEDDING_PREFIXES: ReadonlyArray<readonly [string, number]> = [
@@ -239,16 +250,17 @@ const IPV4_EMBEDDING_PREFIXES: ReadonlyArray<readonly [string, number]> = [
   ['64:ff9b::', 96], // well-known NAT64
 ]
 
-const LINK_LOCAL_IPV4: readonly [string, number] = ['169.254.0.0', 16]
 const LINK_LOCAL_IPV6: readonly [string, number] = ['fe80::', 10]
 
-const LINK_LOCAL_REASON = ' endpoint is link-local, which is never a valid API endpoint (it includes the cloud metadata address). Link-local is rejected by default; set enforcePublicEndpoint to also require a publicly reachable host.'
+const ALWAYS_BLOCKED_REASON = ' endpoint is never a valid API endpoint (link-local, which includes the cloud metadata address, or the unspecified address). It is rejected by default; set enforcePublicEndpoint to also require a publicly reachable host.'
 const INVALID_REASON = ' request URL is invalid.'
 const REJECTED_REASON = ' request URL was rejected by host safety policy.'
 
-function inLinkLocalIpv4(value: bigint): boolean {
-  const network = parseIpv4(LINK_LOCAL_IPV4[0])
-  return network !== null && inRange(value, network, LINK_LOCAL_IPV4[1], 32)
+function isAlwaysBlockedIpv4(value: bigint): boolean {
+  return ALWAYS_BLOCKED_IPV4.some(([network, bits]) => {
+    const parsed = parseIpv4(network)
+    return parsed !== null && inRange(value, parsed, bits, 32)
+  })
 }
 
 function embeddedIpv4(value: bigint): bigint | null {
@@ -259,29 +271,36 @@ function embeddedIpv4(value: bigint): bigint | null {
   return null
 }
 
-/** True when the literal address is link-local, including IPv4 embedded in IPv6. */
-export function isLinkLocalAddress(address: string): boolean {
+/** True when the literal address is never a valid configured endpoint. */
+export function isAlwaysBlockedAddress(address: string): boolean {
   const family = isIP(address)
   if (family === 4) {
     const value = parseIpv4(address)
-    return value !== null && inLinkLocalIpv4(value)
+    return value !== null && isAlwaysBlockedIpv4(value)
   }
   if (family === 6) {
     const value = parseIpv6(address)
     if (value === null) return true
+    // RFC 4291 assigns these two addresses specific meanings that must be read
+    // before the IPv4-compatible form: "::" is unspecified, "::1" is loopback.
+    // Without this, "::1" would decode as IPv4-compatible 0.0.0.1 and be caught
+    // by the 0.0.0.0/8 rule, rejecting the IPv6 loopback by default.
+    if (value === 0n) return true
+    if (value === 1n) return false
     const network = parseIpv6(LINK_LOCAL_IPV6[0])
     if (network !== null && inRange(value, network, LINK_LOCAL_IPV6[1], 128)) return true
     const embedded = embeddedIpv4(value)
-    return embedded !== null && inLinkLocalIpv4(embedded)
+    return embedded !== null && isAlwaysBlockedIpv4(embedded)
   }
   return true
 }
 
 /**
- * Literal-only link-local rejection. Hostnames are left to `enforcePublicEndpoint`
- * so the default path performs no DNS work and changes no existing behaviour.
+ * Literal-only check for the default guard. Hostnames are left to
+ * `enforcePublicEndpoint` so the default path performs no DNS work and changes
+ * no existing behaviour.
  */
-export function linkLocalEndpointError(rawUrl: string): string | undefined {
+export function defaultEndpointError(rawUrl: string): string | undefined {
   let url: URL
   try {
     url = new URL(rawUrl)
@@ -292,7 +311,7 @@ export function linkLocalEndpointError(rawUrl: string): string | undefined {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
   const hostname = url.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase()
   if (!hostname || isIP(hostname) === 0) return undefined
-  return isLinkLocalAddress(hostname) ? LABEL + LINK_LOCAL_REASON : undefined
+  return isAlwaysBlockedAddress(hostname) ? LABEL + ALWAYS_BLOCKED_REASON : undefined
 }
 
 export interface EndpointPolicy {
@@ -304,7 +323,7 @@ export interface EndpointPolicy {
 
 /** Returns a rejection reason, or undefined when the endpoint is acceptable. */
 export async function guardEndpoint(rawUrl: string, policy: EndpointPolicy): Promise<string | undefined> {
-  if (!policy.enforcePublicEndpoint) return linkLocalEndpointError(rawUrl)
+  if (!policy.enforcePublicEndpoint) return defaultEndpointError(rawUrl)
 
   let url: URL
   try {
